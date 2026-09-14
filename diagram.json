@@ -1,0 +1,73 @@
+{
+  "version": 1,
+  "author": "TRACE-X",
+  "editor": "wokwi",
+  "parts": [
+    { "type": "wokwi-esp32-devkit-v1", "id": "esp", "top": 0, "left": 0, "attrs": {} },
+    { "type": "wokwi-potentiometer", "id": "pot_narcotic", "top": -180, "left": -300, "attrs": {} },
+    { "type": "wokwi-potentiometer", "id": "pot_explosive", "top": -60, "left": -300, "attrs": {} },
+    { "type": "wokwi-potentiometer", "id": "pot_heading", "top": 60, "left": -300, "attrs": {} },
+    { "type": "wokwi-ili9341", "id": "tft1", "top": -220, "left": 130, "attrs": {} },
+    { "type": "wokwi-rgb-led", "id": "rgb1", "top": 140, "left": -220, "attrs": {} },
+    { "type": "wokwi-resistor", "id": "r_r", "top": 150, "left": -150, "rotate": 90, "attrs": { "value": "330" } },
+    { "type": "wokwi-resistor", "id": "r_g", "top": 175, "left": -150, "rotate": 90, "attrs": { "value": "330" } },
+    { "type": "wokwi-resistor", "id": "r_b", "top": 200, "left": -150, "rotate": 90, "attrs": { "value": "330" } },
+    { "type": "wokwi-buzzer", "id": "bz1", "top": 140, "left": 60, "attrs": { "volume": "0.2" } },
+    { "type": "wokwi-pushbutton", "id": "btn1", "top": 140, "left": 200, "attrs": { "color": "red" } },
+    { "type": "wokwi-microsd-card", "id": "sd1", "top": 140, "left": 380, "attrs": {} },
+    { "type": "wokwi-pushbutton", "id": "btn2", "top": 260, "left": 200, "attrs": { "color": "blue" } },
+    { "type": "wokwi-pushbutton", "id": "btn3", "top": 260, "left": 340, "attrs": { "color": "green" } }
+  ],
+  "connections": [
+    [ "esp:TX0", "$serialMonitor:RX", "", [] ],
+    [ "esp:RX0", "$serialMonitor:TX", "", [] ],
+
+    [ "pot_narcotic:SIG", "esp:D34", "green", [] ],
+    [ "pot_narcotic:VCC", "esp:3V3", "red", [] ],
+    [ "pot_narcotic:GND", "esp:GND.1", "black", [] ],
+
+    [ "pot_explosive:SIG", "esp:D35", "purple", [] ],
+    [ "pot_explosive:VCC", "esp:3V3", "red", [] ],
+    [ "pot_explosive:GND", "esp:GND.1", "black", [] ],
+
+    [ "pot_heading:SIG", "esp:D33", "orange", [] ],
+    [ "pot_heading:VCC", "esp:3V3", "red", [] ],
+    [ "pot_heading:GND", "esp:GND.1", "black", [] ],
+
+    [ "tft1:VCC", "esp:3V3", "red", [] ],
+    [ "tft1:GND", "esp:GND.1", "black", [] ],
+    [ "tft1:CS", "esp:D14", "blue", [] ],
+    [ "tft1:D/C", "esp:D2", "green", [] ],
+    [ "tft1:MOSI", "esp:D23", "yellow", [] ],
+    [ "tft1:SCK", "esp:D18", "yellow", [] ],
+    [ "tft1:LED", "esp:3V3", "red", [] ],
+
+    [ "rgb1:COM", "esp:3V3", "red", [] ],
+    [ "rgb1:R", "r_r:1", "red", [] ],
+    [ "r_r:2", "esp:D25", "red", [] ],
+    [ "rgb1:G", "r_g:1", "green", [] ],
+    [ "r_g:2", "esp:D26", "green", [] ],
+    [ "rgb1:B", "r_b:1", "blue", [] ],
+    [ "r_b:2", "esp:D27", "blue", [] ],
+
+    [ "bz1:1", "esp:D32", "green", [] ],
+    [ "bz1:2", "esp:GND.2", "black", [] ],
+
+    [ "btn1:1.l", "esp:D15", "green", [] ],
+    [ "btn1:2.l", "esp:GND.2", "black", [] ],
+
+    [ "sd1:CS", "esp:D5", "yellow", [] ],
+    [ "sd1:SCK", "esp:D18", "yellow", [] ],
+    [ "sd1:DI", "esp:D23", "yellow", [] ],
+    [ "sd1:DO", "esp:D19", "yellow", [] ],
+    [ "sd1:VCC", "esp:3V3", "red", [] ],
+    [ "sd1:GND", "esp:GND.1", "black", [] ],
+
+    [ "btn2:1.l", "esp:D4", "blue", [] ],
+    [ "btn2:2.l", "esp:GND.2", "black", [] ],
+
+    [ "btn3:1.l", "esp:D13", "green", [] ],
+    [ "btn3:2.l", "esp:GND.2", "black", [] ]
+  ],
+  "dependencies": {}
+}

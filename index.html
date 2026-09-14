@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>TRACE-X // Central Telemetry & Threat Analytics Console</title>
+    
+    <!-- Leaflet.js Mapping Library -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <!-- Chart.js Analytics Library -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+
+    <!-- Defense & Security SCADA Theme -->
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <!-- Top Command Navigation Bar -->
+    <header class="top-navbar">
+      <div class="brand-section">
+        <div class="brand-logo-tactical">&#x29BF;</div>
+        <div class="brand-title-group">
+          <div class="brand-title">
+            TRACE-X <span class="brand-tag">C2 TELEMETRY</span>
+          </div>
+          <div class="brand-subtitle">RAILWAY SECURITY & HAZMAT DETECTION MONITOR</div>
+        </div>
+      </div>
+
+      <div class="nav-actions">
+        <div id="backend-status" class="status-pill offline">
+          <span class="status-indicator-box"></span> DB: DISCONNECTED
+        </div>
+        <button class="btn" onclick="seedDemoData()">+ Seed Sample Data</button>
+        <button id="btn-open-csv" class="btn">Import SD CSV</button>
+        <button class="btn" onclick="syncThingSpeak()">Sync Cloud</button>
+        <button class="btn btn-primary" onclick="exportData('csv')">Export CSV</button>
+      </div>
+    </header>
+
+    <!-- Navigation Tabs Bar -->
+    <nav class="tabs-bar">
+      <button class="tab-btn active" data-tab="tab-monitor">
+        <span class="tab-index">[01]</span> MONITORING & GPS
+      </button>
+      <button class="tab-btn" data-tab="tab-analytics">
+        <span class="tab-index">[02]</span> ANALYTICS & 360° RADAR
+      </button>
+      <button class="tab-btn" data-tab="tab-compare">
+        <span class="tab-index">[03]</span> INCIDENT COMPARISON
+      </button>
+      <button class="tab-btn" data-tab="tab-logs">
+        <span class="tab-index">[04]</span> AUDIT LOGS & INGESTION
+      </button>
+    </nav>
+
+    <!-- Main Container -->
+    <main class="main-container">
+      <!-- High-Priority Technical Alarm Banner -->
+      <div id="alert-banner" class="alert-banner secure">
+        <span>STATUS: NOMINAL // ALL PODS OPERATIONAL // BACKGROUND CLEAR</span>
+        <span style="font-size:13px; color:var(--text-dim)">TELEMETRY LINK READY</span>
+      </div>
+
+      <!-- KPI Summary Cards Grid -->
+      <section class="kpi-grid">
+        <div class="kpi-card cyan">
+          <div class="kpi-title">TOTAL INSPECTION SCANS</div>
+          <div id="kpi-total" class="kpi-value">0</div>
+          <div class="kpi-sub">Database entries</div>
+        </div>
+        <div class="kpi-card red">
+          <div class="kpi-title">EXPLOSIVE ALARMS</div>
+          <div id="kpi-expl" class="kpi-value" style="color:var(--col-critical)">0</div>
+          <div class="kpi-sub">Volatile vapor triggers</div>
+        </div>
+        <div class="kpi-card yellow">
+          <div class="kpi-title">NARCOTIC DETECTIONS</div>
+          <div id="kpi-narc" class="kpi-value" style="color:var(--col-warning)">0</div>
+          <div class="kpi-sub">Contraband flags</div>
+        </div>
+        <div class="kpi-card green">
+          <div class="kpi-title">CLEAR INSPECTION RATIO</div>
+          <div id="kpi-clear-rate" class="kpi-value" style="color:var(--col-nominal)">100%</div>
+          <div class="kpi-sub">Routine baggage & passengers</div>
+        </div>
+        <div class="kpi-card cyan">
+          <div class="kpi-title">MEAN THREAT CONFIDENCE</div>
+          <div id="kpi-avg-conf" class="kpi-value">0%</div>
+          <div class="kpi-sub">Positive detection average</div>
+        </div>
+        <div class="kpi-card red">
+          <div class="kpi-title">THRESHOLD ALARMS</div>
+          <div id="kpi-alerts" class="kpi-value">0</div>
+          <div class="kpi-sub">Confidence >= 60% events</div>
+        </div>
+      </section>
+
+      <!-- TAB 1: LIVE MONITORING & GPS MAP -->
+      <div id="tab-monitor" class="tab-panel active">
+        <div class="monitor-split">
+          <!-- Left: Live Pod Status & Recent Feed -->
+          <div>
+            <div class="panel-card">
+              <div class="panel-title">CURRENT DETECTOR TELEMETRY</div>
+              <div class="gauge-container">
+                <div class="gauge-header">
+                  <span id="gauge-label">MONITORING NOMINAL</span>
+                  <span id="gauge-conf">0%</span>
+                </div>
+                <div class="progress-bar-bg">
+                  <div id="gauge-fill" class="progress-bar-fill"></div>
+                </div>
+              </div>
+              <p class="panel-subtext">
+                Link: ESP32 Handheld Pod / Wokwi IoT Gateway
+              </p>
+            </div>
+
+            <div class="panel-card" style="margin-bottom: 0;">
+              <div class="panel-title">RECENT TELEMETRY FEED</div>
+              <div id="feed-list" class="feed-list">
+                <!-- Populated dynamically by app.js -->
+              </div>
+            </div>
+          </div>
+
+          <!-- Right: Interactive Leaflet GPS Threat Map -->
+          <div>
+            <div class="panel-card" style="margin-bottom: 0; padding: 16px;">
+              <div class="panel-title" style="margin-bottom: 12px;">
+                <span>GEOGRAPHICAL DEPLOYMENT MAP</span>
+                <span style="font-size: 12px; font-family: var(--text-mono); color: var(--text-dim);">
+                  CLASS: [EXP] CRITICAL &bull; [NRC] WARNING &bull; [CLR] NOMINAL
+                </span>
+              </div>
+              <div id="gps-map"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- TAB 2: DATA ANALYTICS & 360° RADAR -->
+      <div id="tab-analytics" class="tab-panel">
+        <div class="analytics-grid">
+          <!-- 360° Directional Polar Radar -->
+          <div class="chart-card">
+            <div class="panel-title">360° DIRECTIONAL THREAT RADAR (12 SECTORS, 30° SPAN)</div>
+            <div class="chart-wrapper">
+              <canvas id="chart-radar"></canvas>
+            </div>
+            <p class="panel-subtext">
+              Angular distribution of detected threat peaks across operator sweep sectors.
+            </p>
+          </div>
+
+          <!-- Incident Timeline -->
+          <div class="chart-card">
+            <div class="panel-title">DETECTION INTENSITY TIMELINE</div>
+            <div class="chart-wrapper">
+              <canvas id="chart-timeline"></canvas>
+            </div>
+            <p class="panel-subtext">
+              Confidence progression across chronological sweep IDs.
+            </p>
+          </div>
+
+          <!-- Classification Doughnut -->
+          <div class="chart-card">
+            <div class="panel-title">SUBSTANCE CLASSIFICATION RATIO</div>
+            <div class="chart-wrapper">
+              <canvas id="chart-ratio"></canvas>
+            </div>
+          </div>
+
+          <!-- Confidence Histogram -->
+          <div class="chart-card">
+            <div class="panel-title">CONFIDENCE DISTRIBUTION BUCKETS</div>
+            <div class="chart-wrapper">
+              <canvas id="chart-conf-dist"></canvas>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- TAB 3: INCIDENT COMPARISON MATRIX -->
+      <div id="tab-compare" class="tab-panel">
+        <div class="compare-selector-bar">
+          <div>
+            <label for="compare-scan-a">PRIMARY SCAN (A):</label>
+            <select id="compare-scan-a" class="scan-select"></select>
+          </div>
+          <div>
+            <label for="compare-scan-b">REFERENCE SCAN (B):</label>
+            <select id="compare-scan-b" class="scan-select"></select>
+          </div>
+          <button class="btn btn-primary" onclick="renderComparisonView()">Compute Delta</button>
+        </div>
+
+        <div id="compare-matrix" class="comparison-matrix">
+          <!-- Populated dynamically by app.js -->
+        </div>
+
+        <div id="compare-deltas" class="comp-delta-panel">
+          <!-- Populated dynamically by app.js -->
+        </div>
+      </div>
+
+      <!-- TAB 4: TELEMETRY LOGS & AUDIT -->
+      <div id="tab-logs" class="tab-panel">
+        <!-- Filter Bar -->
+        <div class="filter-bar">
+          <input
+            id="search-input"
+            type="text"
+            class="search-input"
+            placeholder="Filter by scan ID, operator notes, substance..."
+          />
+          <select id="filter-threat" class="scan-select" style="min-width: 140px;">
+            <option value="ALL">All Substances</option>
+            <option value="EXPLOSIVE">Class: Explosive</option>
+            <option value="NARCOTIC">Class: Narcotic</option>
+            <option value="CLEAR">Class: Clear</option>
+          </select>
+          <div style="display: flex; align-items: center; gap: 8px; font-size: 11px; font-family: var(--text-mono); color: var(--text-muted);">
+            <span>Min Conf:</span>
+            <input id="filter-conf" type="range" min="0" max="100" value="0" style="width: 90px; accent-color: var(--col-telemetry);" />
+            <span id="filter-conf-val" style="font-weight: 700; color: #fff; width: 32px;">0%</span>
+          </div>
+        </div>
+
+        <!-- Data Table -->
+        <div class="table-container">
+          <table>
+            <thead>
+              <tr>
+                <th>Scan ID</th>
+                <th>Classification</th>
+                <th>Confidence</th>
+                <th>Heading</th>
+                <th>GPS Coordinates</th>
+                <th>Timestamp</th>
+                <th>Operator Notes</th>
+              </tr>
+            </thead>
+            <tbody id="log-table-body">
+              <!-- Populated dynamically by app.js -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </main>
+
+    <!-- SD Card CSV Import Modal -->
+    <div id="csv-modal" class="modal-overlay">
+      <div class="modal-box">
+        <div class="panel-title">
+          <span>IMPORT SD CARD LOGS</span>
+          <button id="btn-close-csv" class="btn" style="padding: 2px 6px;">✕</button>
+        </div>
+        <p style="font-size: 13px; font-family: var(--font-ui); color: var(--text-muted); margin-bottom: 16px;">
+          Select or drag /log.csv from the TRACE-X SD card reader.
+        </p>
+
+        <div id="csv-dropzone" class="drop-zone">
+          <div style="font-family: var(--text-mono); font-weight: 700; font-size: 15px;">DRAG & DROP LOG.CSV</div>
+          <div style="font-size: 13px; color: var(--text-dim); margin-top: 6px;">or click to browse local files</div>
+        </div>
+        <input type="file" id="csv-file-input" accept=".csv" style="display: none;" />
+
+        <div style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px;">
+          <button class="btn" onclick="document.getElementById('csv-modal').classList.remove('open')">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Toast Notifications Container -->
+    <div id="toast-container" class="toast-container"></div>
+
+    <!-- Application Script -->
+    <script src="app.js"></script>
+  </body>
+</html>
