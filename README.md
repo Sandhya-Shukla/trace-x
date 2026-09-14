@@ -65,12 +65,13 @@
 ## Getting Started
 
 ### 1. Running the Simulation in Wokwi
-1. Open the project in VS Code with the **Wokwi for VS Code** extension installed.
-2. Open `diagram.json` or press `F1` $\rightarrow$ `Wokwi: Start Simulator`.
-3. Interact with:
-   - `pot_heading`: Sweep operator angle (0°–360°).
-   - `pot_narcotic` / `pot_explosive`: Introduce threat levels.
-   - Green push button: Save reading to SD card and reset sweep memory for the next sector.
+1. Open the project folder in VS Code with the **PlatformIO** and **Wokwi for VS Code** extensions installed.
+2. Build the firmware once (click the **PlatformIO Build checkmark [✓]** in the bottom status bar, or run `pio run` in terminal). This generates `.pio/build/esp32dev/firmware.bin`.
+3. Open `diagram.json` and click **Start Simulation** (or press `F1` $\rightarrow$ `Wokwi: Start Simulator`).
+4. Interact with:
+   - `pot_heading`: Sweep operator facing angle (0°–360°).
+   - `pot_narcotic` / `pot_explosive`: Adjust chemical vapor confidence levels.
+   - Green push button: Log hit to SD card and reset sweep memory for the next sector.
 
 ### 2. Building and Flashing to Real Hardware
 Using [PlatformIO](https://platformio.org/):
