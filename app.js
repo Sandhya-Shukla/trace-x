@@ -1,142 +1,200 @@
 /**
- * TRACE-X Central Monitoring & Data Analytics Platform (app.js)
- * Dual-Mode: Full SQLite REST API when server.py is running,
- * with graceful in-browser localStorage fallback if opened directly as index.html.
+ * TRACE-X Central Telemetry & Threat Analytics Platform (app.js)
+ * High-legibility Defense & Industrial Monitoring Station Console
+ * 
+ * Key Functions:
+ *  - Prominent Major Hero Alert Console for latest detection
+ *  - Real-time continuous 3-second auto-poll against ThingSpeak channel 3492840
+ *  - Dual-mode: SQLite REST API when server.py is running, with browser-native
+ *    ThingSpeak fetch and localStorage caching when running standalone.
+ *  - Zero emojis, clean SCADA C2 telemetry formatting.
  */
 
 // Global State
 let isBackendOnline = false;
 let allScans = [];
 let filteredScans = [];
+let latestKnownEntryId = 0;
 let mapInstance = null;
 let mapMarkers = [];
-
-// Chart Instances
-let timelineChart = null;
 let radarChart = null;
-let ratioChart = null;
-let confDistChart = null;
+let currentSubview = "map";
+let notesCache = {};
 
-// Initial Demo Dataset for offline fallback
+// Fallback demo scans if offline and no feeds available yet
 const FALLBACK_DEMO_SCANS = [
-  { id: 1, scan_number: 1, timestamp: "2026-09-15 01:10:00", threat_level: "CLEAR", confidence: 0, heading: 15, lat: 28.6139, lon: 77.2090, is_alert: 0, operator_notes: "Routine perimeter scan - Platform 1", source: "demo" },
-  { id: 2, scan_number: 2, timestamp: "2026-09-15 01:15:30", threat_level: "CLEAR", confidence: 2, heading: 45, lat: 28.6141, lon: 77.2092, is_alert: 0, operator_notes: "Luggage rack clear - Coach A1", source: "demo" },
-  { id: 3, scan_number: 3, timestamp: "2026-09-15 01:25:10", threat_level: "NARCOTIC", confidence: 45, heading: 90, lat: 28.6145, lon: 77.2098, is_alert: 0, operator_notes: "Minor trace flagged near locker 12", source: "demo" },
-  { id: 4, scan_number: 4, timestamp: "2026-09-15 01:28:45", threat_level: "NARCOTIC", confidence: 82, heading: 95, lat: 28.6146, lon: 77.2099, is_alert: 1, operator_notes: "STRONG NARCOTIC HIT - Locker 14 inspected", source: "demo" },
-  { id: 5, scan_number: 5, timestamp: "2026-09-15 01:34:00", threat_level: "NARCOTIC", confidence: 88, heading: 92, lat: 28.6146, lon: 77.2099, is_alert: 1, operator_notes: "Secondary sweep confirmed narcotic presence", source: "demo" },
-  { id: 6, scan_number: 6, timestamp: "2026-09-15 01:45:20", threat_level: "CLEAR", confidence: 0, heading: 180, lat: 28.6150, lon: 77.2105, is_alert: 0, operator_notes: "Waiting hall area scan clear", source: "demo" },
-  { id: 7, scan_number: 7, timestamp: "2026-09-15 02:00:15", threat_level: "CLEAR", confidence: 0, heading: 210, lat: 28.6155, lon: 77.2110, is_alert: 0, operator_notes: "Platform 2 walkway inspection", source: "demo" },
-  { id: 8, scan_number: 8, timestamp: "2026-09-15 02:12:40", threat_level: "EXPLOSIVE", confidence: 65, heading: 240, lat: 28.6160, lon: 77.2115, is_alert: 1, operator_notes: "ELEVATED VAPOR - Unattended duffle near Track 3", source: "demo" },
-  { id: 9, scan_number: 9, timestamp: "2026-09-15 02:14:10", threat_level: "EXPLOSIVE", confidence: 94, heading: 245, lat: 28.6161, lon: 77.2116, is_alert: 1, operator_notes: "CRITICAL HAZARD: High nitrate compound detected!", source: "demo" },
-  { id: 10, scan_number: 10, timestamp: "2026-09-15 02:18:00", threat_level: "EXPLOSIVE", confidence: 91, heading: 242, lat: 28.6161, lon: 77.2116, is_alert: 1, operator_notes: "Bomb squad perimeter established", source: "demo" },
-  { id: 11, scan_number: 11, timestamp: "2026-09-15 02:30:00", threat_level: "CLEAR", confidence: 0, heading: 315, lat: 28.6135, lon: 77.2085, is_alert: 0, operator_notes: "South exit gate sweep clear", source: "demo" },
-  { id: 12, scan_number: 12, timestamp: "2026-09-15 02:40:00", threat_level: "CLEAR", confidence: 0, heading: 0, lat: 28.6130, lon: 77.2080, is_alert: 0, operator_notes: "Ticketing counter routine check", source: "demo" }
+  { id: 1, scan_number: 1, timestamp: "2026-09-15T01:10:00Z", threat_level: "CLEAR", confidence: 0, heading: 15, lat: 28.6430, lon: 77.2190, is_alert: 0, operator_notes: "Routine perimeter sweep - Platform 1", source: "demo" },
+  { id: 2, scan_number: 2, timestamp: "2026-09-15T01:25:10Z", threat_level: "NARCOTIC", confidence: 45, heading: 90, lat: 28.6432, lon: 77.2194, is_alert: 0, operator_notes: "Minor organic trace near locker 12", source: "demo" },
+  { id: 3, scan_number: 3, timestamp: "2026-09-15T01:28:45Z", threat_level: "NARCOTIC", confidence: 82, heading: 95, lat: 28.6433, lon: 77.2195, is_alert: 1, operator_notes: "STRONG NARCOTIC HIT - Locker 14 inspected", source: "demo" },
+  { id: 4, scan_number: 4, timestamp: "2026-09-15T02:12:40Z", threat_level: "EXPLOSIVE", confidence: 65, heading: 240, lat: 28.6429, lon: 77.2188, is_alert: 1, operator_notes: "ELEVATED VAPOR - Unattended duffle near Track 3", source: "demo" },
+  { id: 5, scan_number: 5, timestamp: "2026-09-15T02:14:10Z", threat_level: "EXPLOSIVE", confidence: 94, heading: 245, lat: 28.6428, lon: 77.2186, is_alert: 1, operator_notes: "CRITICAL HAZARD: High nitrate compound detected!", source: "demo" }
 ];
 
 // ---------- Initialization ----------
 
 document.addEventListener("DOMContentLoaded", async () => {
-  initTabs();
-  initModals();
+  loadNotesCache();
   initFilters();
-  await checkBackendStatus();
-  await loadData();
+  initModals();
   initMap();
-  initCharts();
-  renderAllViews();
 
-  // Polling every 6 seconds for fresh pod telemetry
+  await checkBackendStatus();
+  await syncThingSpeak(true); // initial silent load
+
+  // If no scans loaded, fallback to demo
+  if (allScans.length === 0) {
+    allScans = [...FALLBACK_DEMO_SCANS];
+    applyFilters();
+    renderAllViews();
+  }
+
+  // Real-time continuous polling every 3 seconds
   setInterval(async () => {
-    await loadData(true);
-  }, 6000);
+    await syncThingSpeak(true);
+  }, 3000);
 });
 
-// ---------- Backend Check & Data Loading ----------
+// ---------- Local Notes Cache Management ----------
+
+function loadNotesCache() {
+  try {
+    const raw = localStorage.getItem("tracex_notes_cache");
+    if (raw) notesCache = JSON.parse(raw);
+  } catch (e) {
+    notesCache = {};
+  }
+}
+
+function saveNotesCache() {
+  try {
+    localStorage.setItem("tracex_notes_cache", JSON.stringify(notesCache));
+  } catch (e) {}
+}
+
+// ---------- Backend Check ----------
 
 async function checkBackendStatus() {
   const pill = document.getElementById("backend-status");
   try {
     const res = await fetch("/api/status", { cache: "no-store" });
     if (res.ok) {
-      const json = await res.json();
       isBackendOnline = true;
-      pill.className = "status-pill online";
-      pill.innerHTML = '<span class="status-indicator-box"></span> DB: SQLITE CONNECTED';
+      if (pill) {
+        pill.className = "status-pill online";
+        pill.innerHTML = '<span class="status-indicator-box"></span> DB: SQLITE + LIVE SYNC (3s)';
+      }
       return;
     }
   } catch (e) {
-    // server.py is not reachable
+    // server.py is not reachable; standalone browser mode
   }
 
   isBackendOnline = false;
-  pill.className = "status-pill offline";
-  pill.innerHTML = '<span class="status-indicator-box"></span> DB: BROWSER STORAGE';
+  if (pill) {
+    pill.className = "status-pill online";
+    pill.innerHTML = '<span class="status-indicator-box"></span> LIVE SYNC ACTIVE (3s)';
+  }
 }
 
-async function loadData(isPolling = false) {
+// ---------- Real-Time ThingSpeak Cloud Sync & Telemetry Ingestion ----------
+
+async function syncThingSpeak(silent = false) {
+  if (!silent) {
+    showToast("Connecting to ThingSpeak Cloud (Channel 3492840)...");
+  }
+
+  // If backend is online, notify server to sync to SQLite as well
   if (isBackendOnline) {
     try {
-      const res = await fetch("/api/scans?limit=200");
-      const json = await res.json();
-      allScans = json.scans || [];
-    } catch (e) {
-      console.warn("Failed to query backend, using local cache", e);
+      fetch("/api/sync-thingspeak", { method: "POST" }).catch(() => {});
+    } catch (e) {}
+  }
+
+  try {
+    // Direct Browser Fetch from ThingSpeak (Public CORS supported)
+    const url = "https://api.thingspeak.com/channels/3492840/feeds.json?results=50";
+    const res = await fetch(url, { cache: "no-store" });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+    const data = await res.json();
+    const feeds = data.feeds || [];
+
+    if (feeds.length > 0) {
+      // Find highest entry_id
+      const maxEntry = Math.max(...feeds.map(f => parseInt(f.entry_id) || 0));
+      const isNewDetection = latestKnownEntryId > 0 && maxEntry > latestKnownEntryId;
+
+      // Map feeds to standard scan objects, newest first
+      const mappedScans = feeds.map(f => {
+        const entryId = parseInt(f.entry_id) || 0;
+        const scanNum = entryId;
+        const lvlCode = String(f.field2 || "0");
+        const conf = parseInt(f.field3) || 0;
+        const lat = parseFloat(f.field4) || 28.6430;
+        const lon = parseFloat(f.field5) || 77.2190;
+        const heading = parseInt(f.field6) || 0;
+        const timestamp = f.created_at;
+
+        let lvlStr = "CLEAR";
+        if (lvlCode === "2") lvlStr = "EXPLOSIVE";
+        else if (lvlCode === "1") lvlStr = "NARCOTIC";
+
+        const cachedNote = notesCache[scanNum] || notesCache[timestamp] || "";
+
+        return {
+          id: entryId,
+          scan_number: scanNum,
+          timestamp: timestamp,
+          threat_level: lvlStr,
+          confidence: conf,
+          heading: heading,
+          lat: lat,
+          lon: lon,
+          is_alert: conf >= 60 ? 1 : 0,
+          operator_notes: cachedNote || "Live pod telemetry stream",
+          source: "live_stream"
+        };
+      }).reverse(); // newest first
+
+      allScans = mappedScans;
+
+      if (isNewDetection) {
+        const newest = allScans[0];
+        showToast(`NEW TELEMETRY: Scan #${newest.scan_number} [${newest.threat_level}] - ${newest.confidence}%`);
+      }
+
+      latestKnownEntryId = maxEntry;
+
+      // Save to local storage cache
+      try {
+        localStorage.setItem("tracex_local_scans", JSON.stringify(allScans));
+      } catch (e) {}
+
+      applyFilters();
+      renderAllViews();
+
+      if (!silent) {
+        showToast(`Cloud Sync Complete: ${feeds.length} records verified.`);
+      }
+      return;
     }
-  } else {
-    // LocalStorage fallback
+  } catch (err) {
+    if (!silent) {
+      showToast("Cloud sync failed. Check internet connection.");
+    }
+  }
+
+  // Fallback to local storage if network request failed
+  if (allScans.length === 0) {
     const saved = localStorage.getItem("tracex_local_scans");
     if (saved) {
       try {
         allScans = JSON.parse(saved);
-      } catch (e) {
-        allScans = FALLBACK_DEMO_SCANS;
-      }
-    } else {
-      allScans = [...FALLBACK_DEMO_SCANS];
-      localStorage.setItem("tracex_local_scans", JSON.stringify(allScans));
+        applyFilters();
+        renderAllViews();
+      } catch (e) {}
     }
   }
-
-  applyFilters();
-  if (!isPolling) {
-    showToast(`Loaded ${allScans.length} telemetry records.`);
-  }
-}
-
-function saveLocalState() {
-  if (!isBackendOnline) {
-    localStorage.setItem("tracex_local_scans", JSON.stringify(allScans));
-  }
-}
-
-// ---------- Tab Management ----------
-
-function initTabs() {
-  const tabBtns = document.querySelectorAll(".tab-btn");
-  tabBtns.forEach(btn => {
-    btn.addEventListener("click", () => {
-      tabBtns.forEach(b => b.classList.remove("active"));
-      document.querySelectorAll(".tab-panel").forEach(p => p.classList.remove("active"));
-
-      btn.classList.add("active");
-      const targetId = btn.getAttribute("data-tab");
-      const targetPanel = document.getElementById(targetId);
-      if (targetPanel) {
-        targetPanel.classList.add("active");
-      }
-
-      // If switching to map or analytics, trigger redraw
-      if (targetId === "tab-monitor" && mapInstance) {
-        setTimeout(() => mapInstance.invalidateSize(), 150);
-      }
-      if (targetId === "tab-analytics") {
-        updateAnalyticsCharts();
-      }
-      if (targetId === "tab-compare") {
-        renderComparisonView();
-      }
-    });
-  });
 }
 
 // ---------- Filter & Search Handling ----------
@@ -149,7 +207,7 @@ function initFilters() {
 
   const applyChange = () => {
     applyFilters();
-    renderAllViews();
+    renderFilteredViews();
   };
 
   if (searchInput) searchInput.addEventListener("input", applyChange);
@@ -185,120 +243,254 @@ function applyFilters() {
 // ---------- Render All Views ----------
 
 function renderAllViews() {
-  renderKPIs();
-  renderAlertBanner();
-  renderLiveFeed();
-  renderMapMarkers();
+  renderHeroAlert(allScans[0] || null);
   renderLogTable();
-  updateAnalyticsCharts();
+  renderMapMarkers();
+  updateRadarChart();
   populateComparisonDropdowns();
 }
 
-// ---------- KPI Calculation & Render ----------
-
-function renderKPIs() {
-  const total = allScans.length;
-  const explosive = allScans.filter(s => s.threat_level === "EXPLOSIVE").length;
-  const narcotic = allScans.filter(s => s.threat_level === "NARCOTIC").length;
-  const clear = allScans.filter(s => s.threat_level === "CLEAR").length;
-  const alerts = allScans.filter(s => s.is_alert || s.confidence >= 60).length;
-
-  const threats = allScans.filter(s => s.threat_level !== "CLEAR");
-  const avgConf = threats.length > 0
-    ? Math.round(threats.reduce((sum, s) => sum + (s.confidence || 0), 0) / threats.length)
-    : 0;
-
-  const clearRate = total > 0 ? Math.round((clear / total) * 100) : 100;
-
-  setEl("kpi-total", total);
-  setEl("kpi-expl", explosive);
-  setEl("kpi-narc", narcotic);
-  setEl("kpi-clear-rate", `${clearRate}%`);
-  setEl("kpi-avg-conf", `${avgConf}%`);
-  setEl("kpi-alerts", alerts);
+function renderFilteredViews() {
+  renderLogTable();
+  renderMapMarkers();
+  updateRadarChart();
 }
 
-function renderAlertBanner() {
-  const banner = document.getElementById("alert-banner");
-  if (!banner) return;
+// ---------- MAJOR HERO ALERT CONSOLE ----------
 
-  // Find latest active threat scan
-  const latestThreat = allScans.find(s => s.threat_level !== "CLEAR");
-  if (!latestThreat || latestThreat.confidence < 60) {
-    banner.className = "alert-banner secure";
-    banner.innerHTML = `
-      <span>STATUS: NOMINAL // ALL PODS OPERATIONAL // BACKGROUND CLEAR</span>
-      <span style="font-size:11px; color:var(--text-dim)">LATEST SWEEP: CLEAR</span>
-    `;
+function renderHeroAlert(scan) {
+  const card = document.getElementById("hero-alert-card");
+  const title = document.getElementById("hero-status-title");
+  const badge = document.getElementById("hero-status-badge");
+  const timeEl = document.getElementById("hero-status-time");
+  const confVal = document.getElementById("hero-conf-val");
+  const meterFill = document.getElementById("hero-meter-fill");
+
+  const scanNum = document.getElementById("hero-scan-num");
+  const threatType = document.getElementById("hero-threat-type");
+  const headingEl = document.getElementById("hero-heading");
+  const coordsEl = document.getElementById("hero-coords");
+  const levelDesc = document.getElementById("hero-level-desc");
+  const sourceEl = document.getElementById("hero-source");
+  const notesText = document.getElementById("hero-notes-text");
+
+  if (!card) return;
+
+  if (!scan) {
+    card.className = "hero-alert-card nominal";
+    if (title) title.innerText = "STATUS: NOMINAL // AWAITING TELEMETRY STREAM";
+    if (badge) { badge.className = "hero-alert-badge nominal"; badge.innerText = "NOMINAL"; }
+    if (timeEl) timeEl.innerText = "Awaiting pod signals...";
+    if (confVal) { confVal.className = "hero-conf-value nominal"; confVal.innerText = "0%"; }
+    if (meterFill) { meterFill.className = "hero-meter-fill"; meterFill.style.width = "0%"; }
+    if (scanNum) scanNum.innerText = "SCAN #--";
+    if (threatType) threatType.innerText = "CLEAR";
+    if (headingEl) headingEl.innerText = "0° [N]";
+    if (coordsEl) coordsEl.innerText = "28.6430, 77.2190";
+    if (levelDesc) levelDesc.innerText = "SECURE";
+    if (sourceEl) sourceEl.innerText = "LIVE STREAM";
+    if (notesText) notesText.innerText = "No remarks attached to latest telemetry entry.";
     return;
   }
 
-  if (latestThreat.threat_level === "EXPLOSIVE") {
-    banner.className = "alert-banner danger";
-    banner.innerHTML = `
-      <span>ALARM [EXP-01]: VOLATILE VAPOR THRESHOLD BREACH (${latestThreat.confidence}%) AT [${latestThreat.lat.toFixed(4)}, ${latestThreat.lon.toFixed(4)}] HEADING ${latestThreat.heading}°</span>
-      <button class="btn btn-danger" onclick="inspectScan(${latestThreat.id})">Inspect Scan #${latestThreat.scan_number}</button>
-    `;
-  } else if (latestThreat.threat_level === "NARCOTIC") {
-    banner.className = "alert-banner warning";
-    banner.innerHTML = `
-      <span>WARNING [NRC-01]: SUSPECT ORGANIC TRACE DETECTED (${latestThreat.confidence}%) AT [${latestThreat.lat.toFixed(4)}, ${latestThreat.lon.toFixed(4)}] HEADING ${latestThreat.heading}°</span>
-      <button class="btn btn-primary" onclick="inspectScan(${latestThreat.id})">Inspect Scan #${latestThreat.scan_number}</button>
-    `;
-  }
-}
+  const conf = Math.min(Math.max(scan.confidence || 0, 0), 100);
+  const threat = (scan.threat_level || "CLEAR").toUpperCase();
+  const heading = scan.heading || 0;
+  const cardinal = getCardinal(heading);
 
-// ---------- Live Feed & Threat Gauge ----------
-
-function renderLiveFeed() {
-  const latest = allScans[0] || null;
-  const fill = document.getElementById("gauge-fill");
-  const label = document.getElementById("gauge-label");
-  const confVal = document.getElementById("gauge-conf");
-
-  if (latest && fill && label && confVal) {
-    const conf = latest.confidence || 0;
-    fill.style.width = `${conf}%`;
-    confVal.innerText = `${conf}%`;
-
-    if (latest.threat_level === "EXPLOSIVE") {
-      fill.className = "progress-bar-fill danger";
-      label.innerText = `EXPLOSIVE DETECTED (${conf}%)`;
-      label.style.color = "var(--threat-expl)";
-    } else if (latest.threat_level === "NARCOTIC") {
-      fill.className = "progress-bar-fill warning";
-      label.innerText = `NARCOTIC FLAGGED (${conf}%)`;
-      label.style.color = "var(--threat-narc)";
-    } else {
-      fill.className = "progress-bar-fill";
-      label.innerText = `NORMAL MONITORING (0%)`;
-      label.style.color = "var(--threat-clear)";
+  if (threat === "EXPLOSIVE") {
+    card.className = "hero-alert-card critical";
+    if (badge) {
+      badge.className = "hero-alert-badge critical";
+      badge.innerText = "CRITICAL HAZARD";
+    }
+    if (title) {
+      title.innerText = `ALARM [EXP-01]: HIGH-CONFIDENCE EXPLOSIVE HAZARD DETECTED`;
+    }
+    if (confVal) {
+      confVal.className = "hero-conf-value critical";
+    }
+    if (meterFill) {
+      meterFill.className = "hero-meter-fill critical";
+    }
+    if (threatType) {
+      threatType.innerHTML = `<span style="color:var(--col-critical);">EXPLOSIVE [CLASS-2]</span>`;
+    }
+    if (levelDesc) {
+      levelDesc.innerHTML = `<span style="color:var(--col-critical); font-weight:800;">CRITICAL ALARM</span>`;
+    }
+  } else if (threat === "NARCOTIC") {
+    card.className = "hero-alert-card warning";
+    if (badge) {
+      badge.className = "hero-alert-badge warning";
+      badge.innerText = "WARNING";
+    }
+    if (title) {
+      title.innerText = `WARNING [NRC-01]: ELEVATED NARCOTIC SIGNATURE FLAGGED`;
+    }
+    if (confVal) {
+      confVal.className = "hero-conf-value warning";
+    }
+    if (meterFill) {
+      meterFill.className = "hero-meter-fill warning";
+    }
+    if (threatType) {
+      threatType.innerHTML = `<span style="color:var(--col-warning);">NARCOTIC [CLASS-1]</span>`;
+    }
+    if (levelDesc) {
+      levelDesc.innerHTML = `<span style="color:var(--col-warning); font-weight:800;">CAUTION ACTIVE</span>`;
+    }
+  } else {
+    card.className = "hero-alert-card nominal";
+    if (badge) {
+      badge.className = "hero-alert-badge nominal";
+      badge.innerText = "NOMINAL";
+    }
+    if (title) {
+      title.innerText = `STATUS: NOMINAL // ALL SENSORS STABLE // BACKGROUND CLEAR`;
+    }
+    if (confVal) {
+      confVal.className = "hero-conf-value nominal";
+    }
+    if (meterFill) {
+      meterFill.className = "hero-meter-fill";
+    }
+    if (threatType) {
+      threatType.innerHTML = `<span style="color:var(--col-nominal);">CLEAR [ALL-OK]</span>`;
+    }
+    if (levelDesc) {
+      levelDesc.innerHTML = `<span style="color:var(--col-nominal); font-weight:800;">SECURE</span>`;
     }
   }
 
-  // Telemetry list (top 8)
-  const listEl = document.getElementById("feed-list");
-  if (!listEl) return;
-  listEl.innerHTML = "";
+  if (confVal) confVal.innerText = `${conf}%`;
+  if (meterFill) meterFill.style.width = `${conf}%`;
+  if (scanNum) scanNum.innerText = `SCAN #${scan.scan_number}`;
+  if (headingEl) headingEl.innerText = `${heading}° [${cardinal}]`;
+  if (coordsEl) coordsEl.innerText = `${Number(scan.lat).toFixed(4)}, ${Number(scan.lon).toFixed(4)}`;
+  if (sourceEl) {
+    sourceEl.innerText = scan.source === "live_stream" ? "POD STREAM (CH-3492840)" : (scan.source === "sd_import" ? "SD CARD LOG" : "LOCAL STORAGE");
+  }
+  if (timeEl) timeEl.innerText = formatRelativeTime(scan.timestamp);
+  if (notesText) {
+    notesText.innerText = scan.operator_notes || "No remarks attached to latest telemetry entry.";
+  }
 
-  allScans.slice(0, 8).forEach(scan => {
-    const item = document.createElement("div");
+  // Rotate compass needle to target bearing
+  const needle = document.getElementById("hero-compass-needle");
+  if (needle) {
+    needle.style.transform = `translateX(-50%) rotate(${heading}deg)`;
+  }
+  const cardinalEl = document.getElementById("hero-heading-cardinal");
+  if (cardinalEl) {
+    cardinalEl.innerText = `${cardinal} Vector (${heading}°)`;
+  }
+}
+
+// ---------- Sample Demo Data Seeder ----------
+
+function seedDemoData() {
+  allScans = [...FALLBACK_DEMO_SCANS];
+  latestKnownEntryId = 5;
+  applyFilters();
+  renderAllViews();
+  showToast("Sample telemetry loaded into console.");
+  if (isBackendOnline) {
+    fetch("/api/demo-data", { method: "POST" }).catch(() => {});
+  }
+}
+
+
+// ---------- Live Telemetry Incident Log Table ----------
+
+function renderLogTable() {
+  const tbody = document.getElementById("log-table-body");
+  if (!tbody) return;
+  tbody.innerHTML = "";
+
+  if (filteredScans.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; color:var(--text-dim); padding:28px;">No telemetry records matching filter criteria.</td></tr>`;
+    return;
+  }
+
+  filteredScans.forEach((scan, idx) => {
+    const tr = document.createElement("tr");
     const lvl = (scan.threat_level || "CLEAR").toLowerCase();
-    item.className = `feed-item ${lvl}`;
-    item.innerHTML = `
-      <div class="feed-top">
-        <span class="feed-scan-id">SCAN #${scan.scan_number}</span>
-        <span class="badge ${lvl}">${scan.threat_level}</span>
-      </div>
-      <div class="feed-details">
-        <span>Conf: <strong>${scan.confidence}%</strong></span>
-        <span>Heading: <strong>${scan.heading}°</strong></span>
-        <span>${formatTime(scan.timestamp)}</span>
-      </div>
+    const isLatest = (idx === 0);
+
+    if (isLatest) {
+      tr.className = "latest-row";
+    }
+
+    const heading = scan.heading || 0;
+    const cardinal = getCardinal(heading);
+
+    tr.innerHTML = `
+      <td>
+        <strong>#${scan.scan_number}</strong>
+        ${isLatest ? '<span class="badge-latest">LATEST</span>' : ''}
+      </td>
+      <td><span class="badge ${lvl}">${scan.threat_level}</span></td>
+      <td><strong>${scan.confidence}%</strong></td>
+      <td>${heading}° [${cardinal}]</td>
+      <td>${Number(scan.lat).toFixed(4)}, ${Number(scan.lon).toFixed(4)}</td>
+      <td>${formatTime(scan.timestamp)}</td>
+      <td>
+        <span class="notes-cell" title="Click to edit operator notes" onclick="editNote(${scan.id}, this)">
+          ${escapeHtml(scan.operator_notes || '')}
+        </span>
+      </td>
     `;
-    item.addEventListener("click", () => inspectScan(scan.id));
-    listEl.appendChild(item);
+
+    tr.addEventListener("click", (e) => {
+      if (e.target.closest(".notes-cell")) return;
+      focusScan(scan);
+    });
+
+    tbody.appendChild(tr);
   });
+}
+
+function focusScan(scan) {
+  if (mapInstance && scan.lat && scan.lon) {
+    mapInstance.setView([scan.lat, scan.lon], 17);
+    showToast(`Focused on Map: Scan #${scan.scan_number}`);
+  }
+}
+
+async function editNote(scanId, element) {
+  const current = element.innerText.trim();
+  const updated = prompt("Enter Operator Remarks for Scan #" + scanId + ":", current);
+  if (updated === null) return;
+
+  const scan = allScans.find(s => s.id === scanId);
+  if (scan) {
+    scan.operator_notes = updated;
+    element.innerText = updated;
+    notesCache[scan.scan_number] = updated;
+    notesCache[scan.timestamp] = updated;
+    saveNotesCache();
+
+    if (allScans[0] && allScans[0].id === scanId) {
+      const heroRemarks = document.getElementById("hero-notes-text");
+      if (heroRemarks) heroRemarks.innerText = updated;
+    }
+  }
+
+  if (isBackendOnline) {
+    try {
+      await fetch(`/api/scans/${scanId}/notes`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ notes: updated })
+      });
+      showToast(`Remarks updated for Scan #${scanId}`);
+    } catch (e) {
+      showToast("Saved to local browser storage.");
+    }
+  } else {
+    showToast(`Remarks saved for Scan #${scanId}`);
+  }
 }
 
 // ---------- Leaflet.js GPS Threat Map ----------
@@ -307,19 +499,17 @@ function initMap() {
   const mapEl = document.getElementById("gps-map");
   if (!mapEl || mapInstance) return;
 
-  // Center on New Delhi station default or latest scan
-  const initialLat = allScans[0]?.lat || 28.6139;
-  const initialLon = allScans[0]?.lon || 77.2090;
+  const defaultLat = 28.6430;
+  const defaultLon = 77.2190;
 
   mapInstance = L.map("gps-map", {
-    center: [initialLat, initialLon],
+    center: [defaultLat, defaultLon],
     zoom: 16,
     zoomControl: true
   });
 
-  // Dark Matter tiles from CartoDB
   L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
-    attribution: '&copy; <a href="https://carto.com/">CARTO</a> | TRACE-X Security Grid',
+    attribution: '&copy; <a href="https://carto.com/">CARTO</a> | TRACE-X Defense Grid',
     maxZoom: 19
   }).addTo(mapInstance);
 }
@@ -327,35 +517,49 @@ function initMap() {
 function renderMapMarkers() {
   if (!mapInstance) return;
 
-  // Clear existing markers
   mapMarkers.forEach(m => mapInstance.removeLayer(m));
   mapMarkers = [];
 
-  allScans.forEach(scan => {
+  if (allScans.length === 0) return;
+
+  const latest = allScans[0];
+  if (latest && latest.lat && latest.lon) {
+    mapInstance.setView([latest.lat, latest.lon], mapInstance.getZoom() || 16);
+  }
+
+  allScans.forEach((scan, idx) => {
     if (!scan.lat || !scan.lon) return;
 
-    let color = "#10b981"; // clear
+    let color = "#10b981";
     if (scan.threat_level === "EXPLOSIVE") color = "#ef4444";
     else if (scan.threat_level === "NARCOTIC") color = "#f59e0b";
 
-    const radius = scan.threat_level === "CLEAR" ? 6 : 9;
+    const isLatest = (idx === 0);
+    const radius = isLatest ? 10 : (scan.threat_level === "CLEAR" ? 6 : 8);
 
     const marker = L.circleMarker([scan.lat, scan.lon], {
       radius: radius,
       fillColor: color,
-      color: "#ffffff",
-      weight: 1.5,
-      opacity: 0.9,
+      color: isLatest ? "#38bdf8" : "#ffffff",
+      weight: isLatest ? 3 : 1.5,
+      opacity: 1.0,
       fillOpacity: 0.85
     });
 
+    const cardinal = getCardinal(scan.heading || 0);
+
     const popupHtml = `
-      <div class="map-popup-title">SCAN #${scan.scan_number} - ${scan.threat_level}</div>
-      <div class="map-popup-row">Confidence: <strong>${scan.confidence}%</strong></div>
-      <div class="map-popup-row">Facing Angle: <strong>${scan.heading}°</strong></div>
-      <div class="map-popup-row">GPS: ${scan.lat.toFixed(5)}, ${scan.lon.toFixed(5)}</div>
-      <div class="map-popup-row">Time: ${formatTime(scan.timestamp)}</div>
-      ${scan.operator_notes ? `<div class="map-popup-row" style="color:var(--accent-cyan)"><em>"${scan.operator_notes}"</em></div>` : ''}
+      <div style="font-family:var(--text-mono); font-size:13px; line-height:1.5;">
+        <div style="font-weight:800; color:${color}; margin-bottom:4px;">
+          SCAN #${scan.scan_number} &bull; ${scan.threat_level}
+          ${isLatest ? ' [LATEST]' : ''}
+        </div>
+        <div>Confidence: <strong>${scan.confidence}%</strong></div>
+        <div>Heading: <strong>${scan.heading || 0}° [${cardinal}]</strong></div>
+        <div>GPS: ${Number(scan.lat).toFixed(5)}, ${Number(scan.lon).toFixed(5)}</div>
+        <div>Time: ${formatTime(scan.timestamp)}</div>
+        ${scan.operator_notes ? `<div style="color:#94a3b8; margin-top:4px;"><em>"${escapeHtml(scan.operator_notes)}"</em></div>` : ''}
+      </div>
     `;
 
     marker.bindPopup(popupHtml);
@@ -364,170 +568,105 @@ function renderMapMarkers() {
   });
 }
 
-// ---------- Chart.js Analytics Visualizations ----------
+// ---------- Subview Switching (Map / Radar / Compare) ----------
 
-function initCharts() {
-  // 1. Timeline Chart
-  const ctxTimeline = document.getElementById("chart-timeline")?.getContext("2d");
-  if (ctxTimeline) {
-    timelineChart = new Chart(ctxTimeline, {
-      type: "line",
-      data: { labels: [], datasets: [] },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: { legend: { labels: { color: "#94a3b8" } } },
-        scales: {
-          x: { ticks: { color: "#64748b" }, grid: { color: "#1e293b" } },
-          y: { min: 0, max: 100, ticks: { color: "#64748b" }, grid: { color: "#1e293b" } }
-        }
-      }
-    });
-  }
+function switchSubview(mode) {
+  currentSubview = mode;
 
-  // 2. 360° Directional Polar Radar Chart
-  const ctxRadar = document.getElementById("chart-radar")?.getContext("2d");
-  if (ctxRadar) {
-    radarChart = new Chart(ctxRadar, {
-      type: "polarArea",
-      data: {
-        labels: ["0°", "30°", "60°", "90°", "120°", "150°", "180°", "210°", "240°", "270°", "300°", "330°"],
-        datasets: [{
-          data: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-          backgroundColor: [
-            "rgba(56, 189, 248, 0.4)", "rgba(56, 189, 248, 0.4)", "rgba(245, 158, 11, 0.5)",
-            "rgba(245, 158, 11, 0.7)", "rgba(245, 158, 11, 0.5)", "rgba(56, 189, 248, 0.4)",
-            "rgba(56, 189, 248, 0.4)", "rgba(239, 68, 68, 0.5)", "rgba(239, 68, 68, 0.8)",
-            "rgba(239, 68, 68, 0.5)", "rgba(56, 189, 248, 0.4)", "rgba(56, 189, 248, 0.4)"
-          ],
-          borderColor: "#1f293d",
-          borderWidth: 1
-        }]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        scales: {
-          r: {
-            grid: { color: "#1e293b" },
-            ticks: { color: "#64748b", backdropColor: "transparent" }
-          }
-        },
-        plugins: {
-          legend: { display: false },
-          tooltip: {
-            callbacks: {
-              label: (item) => ` Sector ${item.label}: ${item.raw} threat detections`
-            }
-          }
-        }
-      }
-    });
-  }
+  const btnMap = document.getElementById("btn-subview-map");
+  const btnRadar = document.getElementById("btn-subview-radar");
+  const btnComp = document.getElementById("btn-subview-compare");
 
-  // 3. Threat Classification Ratio Doughnut
-  const ctxRatio = document.getElementById("chart-ratio")?.getContext("2d");
-  if (ctxRatio) {
-    ratioChart = new Chart(ctxRatio, {
-      type: "doughnut",
-      data: {
-        labels: ["Clear", "Narcotics", "Explosives"],
-        datasets: [{
-          data: [0, 0, 0],
-          backgroundColor: ["#10b981", "#f59e0b", "#ef4444"],
-          borderColor: "#111827",
-          borderWidth: 2
-        }]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-          legend: { position: "right", labels: { color: "#94a3b8" } }
-        }
-      }
-    });
-  }
+  const viewMap = document.getElementById("subview-map");
+  const viewRadar = document.getElementById("subview-radar");
+  const viewComp = document.getElementById("subview-compare");
+  const headerTitle = document.getElementById("subview-header-title");
 
-  // 4. Confidence Distribution Bar Chart
-  const ctxConf = document.getElementById("chart-conf-dist")?.getContext("2d");
-  if (ctxConf) {
-    confDistChart = new Chart(ctxConf, {
-      type: "bar",
-      data: {
-        labels: ["0-20%", "21-40%", "41-60%", "61-80%", "81-100%"],
-        datasets: [
-          { label: "Narcotics", data: [0, 0, 0, 0, 0], backgroundColor: "#f59e0b" },
-          { label: "Explosives", data: [0, 0, 0, 0, 0], backgroundColor: "#ef4444" }
-        ]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: { legend: { labels: { color: "#94a3b8" } } },
-        scales: {
-          x: { ticks: { color: "#64748b" }, grid: { color: "#1e293b" } },
-          y: { ticks: { color: "#64748b" }, grid: { color: "#1e293b" } }
-        }
-      }
-    });
+  [btnMap, btnRadar, btnComp].forEach(b => b?.classList.remove("active"));
+  if (viewMap) viewMap.style.display = "none";
+  if (viewRadar) viewRadar.style.display = "none";
+  if (viewComp) viewComp.style.display = "none";
+
+  if (mode === "map") {
+    btnMap?.classList.add("active");
+    if (viewMap) viewMap.style.display = "block";
+    if (headerTitle) headerTitle.innerText = "GEOGRAPHICAL DEPLOYMENT MAP";
+    if (mapInstance) {
+      setTimeout(() => mapInstance.invalidateSize(), 150);
+    }
+  } else if (mode === "radar") {
+    btnRadar?.classList.add("active");
+    if (viewRadar) viewRadar.style.display = "block";
+    if (headerTitle) headerTitle.innerText = "360° DIRECTIONAL POLAR RADAR";
+    initRadarChart();
+    updateRadarChart();
+  } else if (mode === "compare") {
+    btnComp?.classList.add("active");
+    if (viewComp) viewComp.style.display = "block";
+    if (headerTitle) headerTitle.innerText = "INCIDENT COMPARISON MATRIX";
+    populateComparisonDropdowns();
+    renderComparisonView();
   }
 }
 
-function updateAnalyticsCharts() {
-  if (!timelineChart || !radarChart || !ratioChart || !confDistChart) return;
+// ---------- 360° Directional Polar Radar Chart ----------
 
-  // Timeline (latest 15 in chronological order)
-  const recent = [...allScans].slice(0, 15).reverse();
-  timelineChart.data.labels = recent.map(s => `#${s.scan_number}`);
-  timelineChart.data.datasets = [
-    {
-      label: "Confidence %",
-      data: recent.map(s => s.confidence),
-      borderColor: "#06b6d4",
-      backgroundColor: "rgba(6, 182, 212, 0.1)",
-      fill: true,
-      tension: 0.3
+function initRadarChart() {
+  if (radarChart) return;
+  const ctx = document.getElementById("chart-radar")?.getContext("2d");
+  if (!ctx) return;
+
+  radarChart = new Chart(ctx, {
+    type: "polarArea",
+    data: {
+      labels: ["0° [N]", "30°", "60°", "90° [E]", "120°", "150°", "180° [S]", "210°", "240°", "270° [W]", "300°", "330°"],
+      datasets: [{
+        data: new Array(12).fill(0),
+        backgroundColor: [
+          "rgba(56, 189, 248, 0.45)", "rgba(56, 189, 248, 0.45)", "rgba(245, 158, 11, 0.55)",
+          "rgba(245, 158, 11, 0.75)", "rgba(245, 158, 11, 0.55)", "rgba(56, 189, 248, 0.45)",
+          "rgba(56, 189, 248, 0.45)", "rgba(239, 68, 68, 0.55)", "rgba(239, 68, 68, 0.85)",
+          "rgba(239, 68, 68, 0.55)", "rgba(56, 189, 248, 0.45)", "rgba(56, 189, 248, 0.45)"
+        ],
+        borderColor: "#1e293b",
+        borderWidth: 1.5
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        r: {
+          grid: { color: "#232c3f" },
+          ticks: { color: "#94a3b8", backdropColor: "transparent", font: { family: "JetBrains Mono" } }
+        }
+      },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: (item) => ` Sector ${item.label}: ${item.raw} active threat signals`
+          }
+        }
+      }
     }
-  ];
-  timelineChart.update();
+  });
+}
 
-  // 360° Directional Radar (12 sectors: 30 deg each)
+function updateRadarChart() {
+  if (!radarChart) return;
+
   const sectorCounts = new Array(12).fill(0);
   allScans.filter(s => s.threat_level !== "CLEAR").forEach(s => {
     const sec = Math.floor(((s.heading || 0) % 360) / 30);
     sectorCounts[sec]++;
   });
+
   radarChart.data.datasets[0].data = sectorCounts;
   radarChart.update();
-
-  // Doughnut Ratio
-  const clearCount = allScans.filter(s => s.threat_level === "CLEAR").length;
-  const narcCount = allScans.filter(s => s.threat_level === "NARCOTIC").length;
-  const explCount = allScans.filter(s => s.threat_level === "EXPLOSIVE").length;
-  ratioChart.data.datasets[0].data = [clearCount, narcCount, explCount];
-  ratioChart.update();
-
-  // Confidence Distribution
-  const narcDist = [0, 0, 0, 0, 0];
-  const explDist = [0, 0, 0, 0, 0];
-
-  allScans.forEach(s => {
-    if (s.threat_level === "NARCOTIC") {
-      const idx = Math.min(Math.floor(s.confidence / 20), 4);
-      narcDist[idx]++;
-    } else if (s.threat_level === "EXPLOSIVE") {
-      const idx = Math.min(Math.floor(s.confidence / 20), 4);
-      explDist[idx]++;
-    }
-  });
-
-  confDistChart.data.datasets[0].data = narcDist;
-  confDistChart.data.datasets[1].data = explDist;
-  confDistChart.update();
 }
 
-// ---------- Incident Comparison Engine ----------
+// ---------- Incident Comparison Matrix ----------
 
 function populateComparisonDropdowns() {
   const selA = document.getElementById("compare-scan-a");
@@ -540,25 +679,22 @@ function populateComparisonDropdowns() {
   selA.innerHTML = "";
   selB.innerHTML = "";
 
-  allScans.forEach((scan, idx) => {
+  allScans.forEach((scan) => {
     const optText = `Scan #${scan.scan_number} - ${scan.threat_level} (${scan.confidence}%)`;
     selA.appendChild(new Option(optText, scan.id));
     selB.appendChild(new Option(optText, scan.id));
   });
 
-  // Default selection: pick highest explosive vs highest narcotic or scans 1 & 2
-  if (currentA && allScans.some(s => s.id == currentA)) {
+  if (currentA && allScans.some(s => String(s.id) === String(currentA))) {
     selA.value = currentA;
   } else if (allScans.length > 0) {
-    const expl = allScans.find(s => s.threat_level === "EXPLOSIVE");
-    selA.value = expl ? expl.id : allScans[0].id;
+    selA.value = allScans[0].id;
   }
 
-  if (currentB && allScans.some(s => s.id == currentB)) {
+  if (currentB && allScans.some(s => String(s.id) === String(currentB))) {
     selB.value = currentB;
   } else if (allScans.length > 1) {
-    const narc = allScans.find(s => s.threat_level === "NARCOTIC");
-    selB.value = narc ? narc.id : allScans[1].id;
+    selB.value = allScans[1].id;
   }
 
   selA.onchange = renderComparisonView;
@@ -568,45 +704,46 @@ function populateComparisonDropdowns() {
 function renderComparisonView() {
   const idA = document.getElementById("compare-scan-a")?.value;
   const idB = document.getElementById("compare-scan-b")?.value;
-  const scanA = allScans.find(s => s.id == idA);
-  const scanB = allScans.find(s => s.id == idB);
+  const scanA = allScans.find(s => String(s.id) === String(idA));
+  const scanB = allScans.find(s => String(s.id) === String(idB));
 
-  const container = document.getElementById("compare-matrix");
-  const deltaContainer = document.getElementById("compare-deltas");
-  if (!container || !deltaContainer) return;
+  const matrixEl = document.getElementById("compare-matrix");
+  const deltasEl = document.getElementById("compare-deltas");
+  if (!matrixEl || !deltasEl) return;
 
   if (!scanA || !scanB) {
-    container.innerHTML = "<p>Select two scans above to compute comparative data analytics.</p>";
-    deltaContainer.innerHTML = "";
+    matrixEl.innerHTML = `<p style="color:var(--text-dim); padding:20px; font-family:var(--text-mono);">Select two incident records above to compute comparative delta analytics.</p>`;
+    deltasEl.innerHTML = "";
     return;
   }
 
-  // Render cards for Scan A and Scan B
-  container.innerHTML = `
-    ${renderScanCard(scanA, "PRIMARY INCIDENT (A)")}
-    ${renderScanCard(scanB, "COMPARISON INCIDENT (B)")}
+  matrixEl.innerHTML = `
+    ${renderScanCompareCard(scanA, "PRIMARY (A)")}
+    ${renderScanCompareCard(scanB, "COMPARISON (B)")}
   `;
 
-  // Compute Analytics Deltas
-  const confDelta = scanA.confidence - scanB.confidence;
-  const confDeltaStr = confDelta > 0 ? `+${confDelta}%` : `${confDelta}%`;
+  // Compute Deltas
+  const confDelta = (scanA.confidence || 0) - (scanB.confidence || 0);
+  const confDeltaStr = confDelta >= 0 ? `+${confDelta}%` : `${confDelta}%`;
 
-  // Angular difference (-180 to +180)
-  const angleDelta = (scanB.heading - scanA.heading + 540) % 360 - 180;
-  const angleDeltaStr = Math.abs(angleDelta) <= 15
-    ? "Aligned (±15°)"
+  const angleDelta = (((scanB.heading || 0) - (scanA.heading || 0) + 540) % 360) - 180;
+  const angleDeltaStr = Math.abs(angleDelta) <= 10
+    ? "Aligned (±10°)"
     : `${Math.abs(angleDelta)}° ${angleDelta > 0 ? "Clockwise" : "Counter-Clockwise"}`;
 
-  // Ground distance (Haversine formula in meters)
-  const distanceMeters = haversineMeters(scanA.lat, scanA.lon, scanB.lat, scanB.lon);
-  const distStr = distanceMeters < 1000 ? `${distanceMeters} m` : `${(distanceMeters / 1000).toFixed(2)} km`;
+  const distMeters = haversineMeters(scanA.lat, scanA.lon, scanB.lat, scanB.lon);
+  const distStr = distMeters < 1000 ? `${distMeters} m` : `${(distMeters / 1000).toFixed(2)} km`;
 
-  deltaContainer.innerHTML = `
-    <div class="panel-title">DELTA ANALYSIS MATRIX</div>
+  const matchColor = scanA.threat_level === scanB.threat_level ? "var(--col-nominal)" : "var(--col-warning)";
+
+  deltasEl.innerHTML = `
+    <div class="panel-title" style="margin-bottom:10px;">ANALYTICAL DELTA METRICS</div>
     <div class="delta-grid">
       <div class="delta-box">
         <div class="kpi-title">Confidence Delta (A vs B)</div>
-        <div class="delta-val" style="color:${confDelta >= 0 ? 'var(--threat-expl)' : 'var(--threat-clear)'}">${confDeltaStr}</div>
+        <div class="delta-val" style="color:${confDelta >= 0 ? 'var(--col-critical)' : 'var(--col-nominal)'}">
+          ${confDeltaStr}
+        </div>
       </div>
       <div class="delta-box">
         <div class="kpi-title">Directional Divergence</div>
@@ -617,131 +754,67 @@ function renderComparisonView() {
         <div class="delta-val">${distStr}</div>
       </div>
       <div class="delta-box">
-        <div class="kpi-title">Threat Classification Match</div>
-        <div class="delta-val" style="font-size:16px; margin-top:8px; color:${scanA.threat_level === scanB.threat_level ? 'var(--threat-clear)' : 'var(--threat-narc)'}">
-          ${scanA.threat_level === scanB.threat_level ? 'MATCH (' + scanA.threat_level + ')' : 'DIVERGENT CLUSTER'}
+        <div class="kpi-title">Classification Correlation</div>
+        <div class="delta-val" style="font-size:13px; color:${matchColor};">
+          ${scanA.threat_level === scanB.threat_level ? 'MATCH (' + scanA.threat_level + ')' : 'DIVERGENT'}
         </div>
       </div>
     </div>
   `;
 }
 
-function renderScanCard(scan, tag) {
+function renderScanCompareCard(scan, tag) {
   const lvl = (scan.threat_level || "CLEAR").toLowerCase();
+  const cardinal = getCardinal(scan.heading || 0);
+
   return `
-    <div class="comp-card highlight">
+    <div class="comp-card">
       <div class="comp-header">
         <div>
-          <span style="font-size:11px; color:var(--accent-cyan); font-weight:700;">${tag}</span>
+          <span style="font-size:10px; color:var(--col-telemetry); font-weight:800; font-family:var(--text-mono);">${tag}</span>
           <div class="comp-title">SCAN #${scan.scan_number}</div>
         </div>
         <span class="badge ${lvl}">${scan.threat_level}</span>
       </div>
 
-      <div class="compass-dial">
-        <div class="compass-needle" style="transform: rotate(${scan.heading}deg);"></div>
-      </div>
-      <div style="text-align:center; font-size:12px; color:var(--text-muted); margin-bottom:12px;">Facing: <strong>${scan.heading}°</strong></div>
-
       <div class="comp-metric-row">
-        <span class="comp-metric-label">Confidence</span>
+        <span class="comp-metric-label">Certainty</span>
         <span class="comp-metric-val">${scan.confidence}%</span>
       </div>
       <div class="comp-metric-row">
+        <span class="comp-metric-label">Heading</span>
+        <span class="comp-metric-val">${scan.heading || 0}° [${cardinal}]</span>
+      </div>
+      <div class="comp-metric-row">
         <span class="comp-metric-label">Coordinates</span>
-        <span class="comp-metric-val">${scan.lat.toFixed(4)}, ${scan.lon.toFixed(4)}</span>
+        <span class="comp-metric-val">${Number(scan.lat).toFixed(4)}, ${Number(scan.lon).toFixed(4)}</span>
       </div>
       <div class="comp-metric-row">
         <span class="comp-metric-label">Recorded At</span>
         <span class="comp-metric-val">${formatTime(scan.timestamp)}</span>
       </div>
-      <div class="comp-metric-row">
-        <span class="comp-metric-label">Data Source</span>
-        <span class="comp-metric-val">${scan.source || 'pod'}</span>
-      </div>
-      <div style="margin-top:12px; font-size:12px; color:var(--text-muted)">
-        <strong>Field Notes:</strong> ${scan.operator_notes || '<em>No notes added</em>'}
+      <div style="margin-top:10px; font-size:12px; color:var(--text-muted); font-family:var(--text-mono);">
+        <strong>Remarks:</strong> ${escapeHtml(scan.operator_notes || 'None')}
       </div>
     </div>
   `;
 }
 
-// Haversine formula
 function haversineMeters(lat1, lon1, lat2, lon2) {
   const R = 6371e3;
-  const φ1 = (lat1 * Math.PI) / 180;
-  const φ2 = (lat2 * Math.PI) / 180;
-  const Δφ = ((lat2 - lat1) * Math.PI) / 180;
-  const Δλ = ((lon2 - lon1) * Math.PI) / 180;
+  const p1 = (lat1 * Math.PI) / 180;
+  const p2 = (lat2 * Math.PI) / 180;
+  const dp = ((lat2 - lat1) * Math.PI) / 180;
+  const dl = ((lon2 - lon1) * Math.PI) / 180;
 
-  const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
-            Math.cos(φ1) * Math.cos(φ2) *
-            Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+  const a = Math.sin(dp / 2) * Math.sin(dp / 2) +
+            Math.cos(p1) * Math.cos(p2) *
+            Math.sin(dl / 2) * Math.sin(dl / 2);
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return Math.round(R * c);
 }
 
-// ---------- Audit Logs & In-Line Notes ----------
-
-function renderLogTable() {
-  const tbody = document.getElementById("log-table-body");
-  if (!tbody) return;
-  tbody.innerHTML = "";
-
-  if (filteredScans.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; color:var(--text-dim); padding:24px;">No telemetry records matching filter criteria.</td></tr>`;
-    return;
-  }
-
-  filteredScans.forEach(scan => {
-    const tr = document.createElement("tr");
-    const lvl = (scan.threat_level || "CLEAR").toLowerCase();
-    tr.innerHTML = `
-      <td>#${scan.scan_number}</td>
-      <td><span class="badge ${lvl}">${scan.threat_level}</span></td>
-      <td><strong>${scan.confidence}%</strong></td>
-      <td>${scan.heading}°</td>
-      <td>${scan.lat.toFixed(4)}, ${scan.lon.toFixed(4)}</td>
-      <td>${formatTime(scan.timestamp)}</td>
-      <td>
-        <span class="notes-cell" title="Click to edit operator field notes" onclick="editNote(${scan.id}, this)">
-          ${escapeHtml(scan.operator_notes || '')}
-        </span>
-      </td>
-    `;
-    tbody.appendChild(tr);
-  });
-}
-
-async function editNote(scanId, element) {
-  const current = element.innerText.trim();
-  const updated = prompt("Enter Operator Field Notes for Scan #" + scanId + ":", current);
-  if (updated === null) return;
-
-  const scan = allScans.find(s => s.id === scanId);
-  if (scan) {
-    scan.operator_notes = updated;
-    element.innerText = updated;
-    saveLocalState();
-  }
-
-  if (isBackendOnline) {
-    try {
-      await fetch(`/api/scans/${scanId}/notes`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ notes: updated })
-      });
-      showToast(`Notes updated for Scan #${scanId}`);
-    } catch (e) {
-      showToast("Updated locally (offline mode).");
-    }
-  } else {
-    showToast(`Notes saved to browser database.`);
-  }
-}
-
-// ---------- Modals & Actions ----------
+// ---------- SD Card CSV Import / Export ----------
 
 function initModals() {
   const modal = document.getElementById("csv-modal");
@@ -783,26 +856,8 @@ function initModals() {
 
 function handleCsvFile(file) {
   const reader = new FileReader();
-  reader.onload = async (e) => {
+  reader.onload = (e) => {
     const text = e.target.result;
-    if (isBackendOnline) {
-      try {
-        const res = await fetch("/api/upload-csv", {
-          method: "POST",
-          headers: { "Content-Type": "text/csv" },
-          body: text
-        });
-        const json = await res.json();
-        showToast(`Successfully imported ${json.imported_count || 0} scans from SD card.`);
-        document.getElementById("csv-modal")?.classList.remove("open");
-        await loadData();
-        return;
-      } catch (err) {
-        console.warn("Server import error, using local parser", err);
-      }
-    }
-
-    // Client-side CSV Parser
     parseCsvClientSide(text);
   };
   reader.readAsText(file);
@@ -812,15 +867,15 @@ function parseCsvClientSide(text) {
   const lines = text.trim().split("\n").filter(l => l.trim().length > 0);
   let count = 0;
   lines.forEach((line, idx) => {
-    if (idx === 0 && line.toLowerCase().includes("scan")) return; // header
+    if (idx === 0 && line.toLowerCase().includes("scan")) return;
     const p = line.split(",").map(s => s.trim());
     if (p.length >= 4) {
       const scanNum = parseInt(p[0]) || (allScans.length + 1);
       const lvlRaw = p.length >= 7 ? p[2] : p[1];
       const conf = parseInt(p.length >= 7 ? p[3] : p[2]) || 0;
       const heading = parseInt(p.length >= 7 ? p[4] : p[3]) || 0;
-      const lat = parseFloat(p.length >= 7 ? p[5] : p[4]) || 28.6139;
-      const lon = parseFloat(p.length >= 7 ? p[6] : p[5]) || 77.2090;
+      const lat = parseFloat(p.length >= 7 ? p[5] : p[4]) || 28.6430;
+      const lon = parseFloat(p.length >= 7 ? p[6] : p[5]) || 77.2190;
 
       let lvlStr = "CLEAR";
       if (lvlRaw === "2" || lvlRaw === "EXPLOSIVE") lvlStr = "EXPLOSIVE";
@@ -836,104 +891,20 @@ function parseCsvClientSide(text) {
         lat: lat,
         lon: lon,
         is_alert: conf >= 60 ? 1 : 0,
-        operator_notes: "Imported from SD Card log",
+        operator_notes: "Imported from MicroSD log.csv",
         source: "sd_import"
       });
       count++;
     }
   });
 
-  saveLocalState();
   applyFilters();
   renderAllViews();
   document.getElementById("csv-modal")?.classList.remove("open");
-  showToast(`Imported ${count} scans into browser database.`);
+  showToast(`Imported ${count} scan records from SD Card.`);
 }
 
-// Action: Sync from ThingSpeak Cloud
-async function syncThingSpeak() {
-  showToast("Syncing telemetry with ThingSpeak Cloud...");
-  if (isBackendOnline) {
-    try {
-      const res = await fetch("/api/sync-thingspeak", { method: "POST" });
-      const json = await res.json();
-      showToast(`Cloud Sync Complete: ${json.synced_count || 0} new feeds added.`);
-      await loadData();
-      return;
-    } catch (e) {}
-  }
-
-  // Direct Browser ThingSpeak Fetch
-  try {
-    const res = await fetch("https://api.thingspeak.com/channels/3492840/feeds.json?results=20");
-    const json = await res.json();
-    let newFeeds = 0;
-    (json.feeds || []).forEach(f => {
-      const scanNum = parseInt(f.field1 || 0);
-      const lvlCode = f.field2;
-      const conf = parseInt(f.field3 || 0);
-      const lat = parseFloat(f.field4 || 28.6139);
-      const lon = parseFloat(f.field5 || 77.2090);
-
-      let lvlStr = "CLEAR";
-      if (lvlCode === "2") lvlStr = "EXPLOSIVE";
-      else if (lvlCode === "1") lvlStr = "NARCOTIC";
-
-      // Deduplicate
-      if (!allScans.some(s => s.scan_number === scanNum && s.source === "cloud_sync")) {
-        allScans.unshift({
-          id: Date.now() + Math.random(),
-          scan_number: scanNum,
-          timestamp: f.created_at,
-          threat_level: lvlStr,
-          confidence: conf,
-          heading: 0,
-          lat: lat,
-          lon: lon,
-          is_alert: conf >= 60 ? 1 : 0,
-          operator_notes: "Synced from ThingSpeak",
-          source: "cloud_sync"
-        });
-        newFeeds++;
-      }
-    });
-
-    saveLocalState();
-    applyFilters();
-    renderAllViews();
-    showToast(`Cloud Sync Complete: ${newFeeds} new records pulled.`);
-  } catch (err) {
-    showToast("Cloud sync failed. Check internet connection.");
-  }
-}
-
-// Action: Seed Realistic Demo Inspection Data
-async function seedDemoData() {
-  if (isBackendOnline) {
-    try {
-      await fetch("/api/demo-data", { method: "POST" });
-      await loadData();
-      showToast("Added 12 realistic railway defense inspection scans.");
-      return;
-    } catch (e) {}
-  }
-
-  // Local fallback
-  allScans = [...FALLBACK_DEMO_SCANS, ...allScans];
-  saveLocalState();
-  applyFilters();
-  renderAllViews();
-  showToast("Loaded 12 demo inspection scans into database.");
-}
-
-// Action: Export Data
 function exportData(format = "csv") {
-  if (isBackendOnline) {
-    window.location.href = `/api/export?format=${format}`;
-    return;
-  }
-
-  // Browser export fallback
   if (format === "json") {
     downloadFile(JSON.stringify(allScans, null, 2), "tracex_telemetry.json", "application/json");
   } else {
@@ -962,26 +933,12 @@ function downloadFile(content, fileName, contentType) {
   a.click();
 }
 
-function inspectScan(scanId) {
-  const scan = allScans.find(s => s.id === scanId);
-  if (!scan) return;
-
-  // Switch to comparison tab and set as Primary
-  const compTabBtn = document.querySelector('[data-tab="tab-compare"]');
-  if (compTabBtn) compTabBtn.click();
-
-  const selA = document.getElementById("compare-scan-a");
-  if (selA) {
-    selA.value = scanId;
-    renderComparisonView();
-  }
-}
-
 // ---------- Helper Utilities ----------
 
-function setEl(id, val) {
-  const el = document.getElementById(id);
-  if (el) el.innerText = val;
+function getCardinal(deg) {
+  const directions = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"];
+  const val = Math.round((((deg % 360) + 360) % 360) / 22.5);
+  return directions[val % 16];
 }
 
 function formatTime(isoStr) {
@@ -989,6 +946,25 @@ function formatTime(isoStr) {
   try {
     const d = new Date(isoStr);
     return isNaN(d.getTime()) ? isoStr : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  } catch (e) {
+    return isoStr;
+  }
+}
+
+function formatRelativeTime(isoStr) {
+  if (!isoStr) return "--";
+  try {
+    const d = new Date(isoStr);
+    if (isNaN(d.getTime())) return isoStr;
+    const diffSec = Math.round((Date.now() - d.getTime()) / 1000);
+    const dateStr = d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+    const timeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+    if (diffSec < 15) return `${dateStr} ${timeStr} (Just now)`;
+    if (diffSec < 60) return `${dateStr} ${timeStr} (${diffSec}s ago)`;
+    if (diffSec < 3600) return `${dateStr} ${timeStr} (${Math.floor(diffSec / 60)}m ago)`;
+    if (diffSec < 86400) return `${dateStr} ${timeStr} (${Math.floor(diffSec / 3600)}h ago)`;
+    return `${dateStr} ${timeStr}`;
   } catch (e) {
     return isoStr;
   }

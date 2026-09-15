@@ -346,11 +346,13 @@ class TraceXHandler(SimpleHTTPRequestHandler):
 
         for f in feeds:
             try:
-                scan_num = int(f.get("field1", 0)) if f.get("field1") else 0
+                entry_id = int(f.get("entry_id", 0))
+                scan_num = entry_id if entry_id > 0 else (int(f.get("field1", 0)) if f.get("field1") else 0)
                 lvl_code = str(f.get("field2", "0"))
                 conf = int(f.get("field3", 0)) if f.get("field3") else 0
                 lat = float(f.get("field4", 28.6139)) if f.get("field4") else 28.6139
                 lon = float(f.get("field5", 77.2090)) if f.get("field5") else 77.2090
+                heading = int(f.get("field6", 0)) if f.get("field6") else 0
                 created_at = f.get("created_at", datetime.now().isoformat())
 
                 level_str = "CLEAR"
@@ -367,8 +369,8 @@ class TraceXHandler(SimpleHTTPRequestHandler):
 
                 cur.execute("""
                     INSERT INTO scans (scan_number, timestamp, threat_level, confidence, heading, lat, lon, sensor_narc, sensor_expl, is_alert, source)
-                    VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, 'cloud_sync')
-                """, (scan_num, created_at, level_str, conf, lat, lon, narc, expl, is_alert))
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'cloud_sync')
+                """, (scan_num, created_at, level_str, conf, heading, lat, lon, narc, expl, is_alert))
                 synced += 1
             except Exception as feed_err:
                 print("Error parsing feed item:", feed_err)

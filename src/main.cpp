@@ -181,7 +181,7 @@ void connectWiFi() {
   }
 }
 
-void sendToCloud(ThreatLevel level, int confidence, float lat, float lon) {
+void sendToCloud(ThreatLevel level, int confidence, float lat, float lon, int heading) {
   if (!wifiReady || WiFi.status() != WL_CONNECTED) return;
 
   static unsigned long lastUploadTime = 0;
@@ -191,14 +191,15 @@ void sendToCloud(ThreatLevel level, int confidence, float lat, float lon) {
   lastUploadTime = millis();
 
   HTTPClient http;
-  http.setConnectTimeout(250); // non-blocking 250ms connect timeout!
-  http.setTimeout(250);        // non-blocking 250ms read timeout!
+  http.setConnectTimeout(1500); // 1.5s reliable connect timeout for Wokwi gateway
+  http.setTimeout(1500);        // 1.5s read timeout
   String url = "http://api.thingspeak.com/update?api_key=" + String(THINGSPEAK_API_KEY) +
                "&field1=" + String(scanCount) +
                "&field2=" + String((int)level) +
                "&field3=" + String(confidence) +
                "&field4=" + String(lat, 5) +
-               "&field5=" + String(lon, 5);
+               "&field5=" + String(lon, 5) +
+               "&field6=" + String(heading);
 
   http.begin(url);
   int code = http.GET();
@@ -722,7 +723,7 @@ void loop() {
     if (digitalRead(PIN_SEND_BTN) == LOW) {
       scanCount++;
       logToSD(dominant, domConf, lastLat, lastLon);
-      sendToCloud(dominant, domConf, lastLat, lastLon);
+      sendToCloud(dominant, domConf, lastLat, lastLon, currentHeading);
       savedMsgUntil = millis() + SAVED_MSG_MS;
       clearSweepMemory();
       Serial.print("Manual SEND #"); Serial.print(scanCount);
