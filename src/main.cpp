@@ -342,13 +342,13 @@ void showMonitor(int confN, int confE, ThreatLevel dominant, int domConf,
     char msg[32];
     if (guidance == DIR_AHEAD) {
       tft.setTextColor(ILI9341_GREEN, cardBg);
-      snprintf(msg, sizeof(msg), "%-22s", currentLang == 0 ? "== TARGET AHEAD ==" : "== TARGET SAMNE ==");
+      snprintf(msg, sizeof(msg), "%-22s", currentLang == 0 ? "== TARGET AHEAD (0\367) ==" : "== TARGET SAMNE (0\367) ==");
     } else if (guidance == DIR_RIGHT) {
       tft.setTextColor(ILI9341_YELLOW, cardBg);
-      snprintf(msg, sizeof(msg), currentLang == 0 ? "TURN RIGHT >> (+%d%c) " : "DAAYE MUDO >> (+%d%c) ", turnAngle, (char)247);
+      snprintf(msg, sizeof(msg), currentLang == 0 ? "TURN RIGHT >> (+%d%c) " : "DAAYE MUDO >> (+%d%c) ", abs(turnAngle), (char)247);
     } else if (guidance == DIR_LEFT) {
       tft.setTextColor(ILI9341_YELLOW, cardBg);
-      snprintf(msg, sizeof(msg), currentLang == 0 ? "<< TURN LEFT (%d%c)   " : "<< BAAYE MUDO (%d%c)   ", turnAngle, (char)247);
+      snprintf(msg, sizeof(msg), currentLang == 0 ? "<< TURN LEFT (-%d%c)  " : "<< BAAYE MUDO (-%d%c)  ", abs(turnAngle), (char)247);
     } else {
       tft.setTextColor(ILI9341_WHITE, cardBg);
       snprintf(msg, sizeof(msg), "%-22s", currentLang == 0 ? "SWEEP: SCANNING..." : "SWEEP: SCAN KARO...");
@@ -358,15 +358,20 @@ void showMonitor(int confN, int confE, ThreatLevel dominant, int domConf,
     tft.setTextSize(1);
     tft.setCursor(12, 64);
     char subMsg[48];
-    if (guidance != DIR_SCANNING && targetHeading >= 0) {
+    if (guidance == DIR_AHEAD) {
+      tft.setTextColor(ILI9341_GREEN, cardBg);
+      snprintf(subMsg, sizeof(subMsg), currentLang == 0 ? "Offset: 0%c | Target Ahead | Peak:%3d%%" : "Offset: 0%c | Samne Lakshya | Peak:%3d%%",
+               (char)247, targetConf);
+    } else if (guidance != DIR_SCANNING && targetHeading >= 0) {
       tft.setTextColor(ILI9341_WHITE, cardBg);
-      snprintf(subMsg, sizeof(subMsg), currentLang == 0 ? "Target:%3d%c | Peak:%3d%% (%-9s)" : "Lakshya:%3d%c | Peak:%3d%% (%-9s)",
-               targetHeading, (char)247, targetConf, levelName(targetThreat));
+      snprintf(subMsg, sizeof(subMsg), currentLang == 0 ? "Offset:%3d%c away | Peak:%3d%% (%-5s)" : "Offset:%3d%c door | Peak:%3d%% (%-5s)",
+               abs(turnAngle), (char)247, targetConf, levelName(targetThreat));
     } else {
       tft.setTextColor(ILI9341_LIGHTGREY, cardBg);
       snprintf(subMsg, sizeof(subMsg), "%-44s", currentLang == 0 ? "Sweep heading knob to scan 360 deg" : "Khatra khojne 360 deg sweep karein");
     }
     tft.print(subMsg);
+
 
     lastGuidance = guidance;
     lastTurnAngle = turnAngle;
@@ -734,14 +739,13 @@ void loop() {
     if (digitalRead(PIN_SEND_BTN) == LOW) {
       scanCount++;
 
-      // Peak threat attributes: save the high-confidence detection angle and confidence
+      // Determine angle: 0 if on target ahead, or exact angle away if turned away
+      int saveAngle = (guidance == DIR_AHEAD || targetHeading < 0) ? 0 : abs(turnAngle);
       int saveConf = (targetHeading >= 0 && targetConf > domConf) ? targetConf : domConf;
       ThreatLevel saveThreat = (targetHeading >= 0 && targetConf > domConf) ? targetThreat : dominant;
-      int savePeakAngle = (targetHeading >= 0) ? targetHeading : currentHeading;
-      int saveFacingAngle = currentHeading;
 
-      logToSD(saveThreat, saveConf, lastLat, lastLon, savePeakAngle);
-      sendToCloud(saveThreat, saveConf, lastLat, lastLon, savePeakAngle, saveFacingAngle);
+      logToSD(saveThreat, saveConf, lastLat, lastLon, saveAngle);
+      sendToCloud(saveThreat, saveConf, lastLat, lastLon, saveAngle, (targetHeading >= 0 ? targetHeading : currentHeading));
       savedMsgUntil = millis() + SAVED_MSG_MS;
 
       // DO NOT call clearSweepMemory()!
@@ -751,8 +755,10 @@ void loop() {
       Serial.print("Manual SEND #"); Serial.print(scanCount);
       Serial.print(" level="); Serial.print(levelName(saveThreat));
       Serial.print(" conf="); Serial.print(saveConf);
-      Serial.print(" peakAngle="); Serial.print(savePeakAngle);
-      Serial.print(" facingAngle="); Serial.println(saveFacingAngle);
+      Serial.print(" angle="); Serial.print(saveAngle);
+      Serial.print(" (targetHeading="); Serial.print(targetHeading);
+      Serial.print(" currentHeading="); Serial.print(currentHeading);
+      Serial.println(")");
     }
   }
   lastSendState = sendState;
@@ -761,9 +767,16 @@ void loop() {
   unsigned long now = millis();
   if (now - lastDisplayUpdate >= 50) {
     lastDisplayUpdate = now;
+    static char statusBuf[24];
     const char* status;
     if (now < savedMsgUntil) {
-      status = (currentLang == 0) ? "SAVED!" : "SAVE HO GAYA!";
+      int dispAngle = (guidance == DIR_AHEAD || targetHeading < 0) ? 0 : abs(turnAngle);
+      if (currentLang == 0) {
+        snprintf(statusBuf, sizeof(statusBuf), "SAVED (%d%c)", dispAngle, (char)247);
+      } else {
+        snprintf(statusBuf, sizeof(statusBuf), "SAVE (%d%c)", dispAngle, (char)247);
+      }
+      status = statusBuf;
     } else if (domConf >= ALERT_THRESHOLD) {
       status = (currentLang == 0) ? "ALERT" : "SAVDHAN";
     } else {
@@ -780,17 +793,18 @@ void loop() {
   bool aboveThreshold = domConf >= ALERT_THRESHOLD;
   if (aboveThreshold && !lastAboveThreshold) {
     scanCount++;
-    int peakHeading = (targetHeading >= 0) ? targetHeading : currentHeading;
+    int alertAngle = (guidance == DIR_AHEAD || targetHeading < 0) ? 0 : abs(turnAngle);
     Serial.print("AUTO ALERT #"); Serial.print(scanCount);
     Serial.print(" level="); Serial.print(levelName(dominant));
     Serial.print(" conf="); Serial.print(domConf);
-    Serial.print(" peakAngle="); Serial.print(peakHeading);
+    Serial.print(" angle="); Serial.print(alertAngle);
     Serial.print(" facingHdg="); Serial.print(currentHeading);
     Serial.print(" lat="); Serial.print(lastLat, 5);
     Serial.print(" lon="); Serial.println(lastLon, 5);
 
-    logToSD(dominant, domConf, lastLat, lastLon, peakHeading);
+    logToSD(dominant, domConf, lastLat, lastLon, alertAngle);
     // Cloud upload intentionally omitted here to guarantee zero latency during sweep!
   }
+
   lastAboveThreshold = aboveThreshold;
 }

@@ -134,13 +134,7 @@ async function syncThingSpeak(silent = false) {
         const lon = parseFloat(f.field5) || 77.2190;
 
         const hasF6 = f.field6 !== undefined && f.field6 !== null && String(f.field6).trim() !== "";
-        const hasF7 = f.field7 !== undefined && f.field7 !== null && String(f.field7).trim() !== "";
-        const peakAngle = hasF6 ? parseInt(f.field6) : null;
-        const facingAngle = hasF7 ? parseInt(f.field7) : null;
-        const cachedAngle = notesCache[scanNum + "_angle"] !== undefined ? parseInt(notesCache[scanNum + "_angle"]) : null;
-
-        const finalHeading = cachedAngle !== null ? cachedAngle : (peakAngle !== null ? peakAngle : facingAngle);
-
+        const offsetAngle = hasF6 ? parseInt(f.field6) : 0;
         const timestamp = f.created_at;
 
         let lvlStr = "CLEAR";
@@ -155,8 +149,7 @@ async function syncThingSpeak(silent = false) {
           timestamp: timestamp,
           threat_level: lvlStr,
           confidence: conf,
-          heading: finalHeading,
-          facing_heading: facingAngle,
+          heading: offsetAngle,
           lat: lat,
           lon: lon,
           is_alert: conf >= 60 ? 1 : 0,
@@ -164,6 +157,7 @@ async function syncThingSpeak(silent = false) {
           source: "live_stream"
         };
       }).reverse(); // newest first
+
 
 
       allScans = mappedScans;
@@ -376,15 +370,15 @@ function renderHeroAlert(scan) {
   if (meterFill) meterFill.style.width = `${conf}%`;
   if (scanNum) scanNum.innerText = `SCAN #${scan.scan_number}`;
 
-  const hasHeading = scan.heading !== null && scan.heading !== undefined;
-  const headingVal = hasHeading ? scan.heading : 0;
-  const cardinal = getCardinal(headingVal);
+
+  const headingVal = (scan.heading !== null && scan.heading !== undefined) ? parseInt(scan.heading) : 0;
+  const isTargetAhead = (headingVal === 0);
 
   if (headingEl) {
-    if (hasHeading) {
-      headingEl.innerHTML = `<span>${headingVal}°</span> <span style="font-size:16px; color:var(--col-telemetry);">[${cardinal}]</span>`;
+    if (isTargetAhead) {
+      headingEl.innerHTML = `<span style="color:var(--col-nominal);">0°</span> <span style="font-size:16px; color:var(--col-nominal);">[AHEAD]</span>`;
     } else {
-      headingEl.innerHTML = `<span style="font-size:16px; color:var(--col-telemetry); cursor:pointer;" onclick="editAngle(${scan.id}, this)">-- [Click to set angle]</span>`;
+      headingEl.innerHTML = `<span style="color:var(--col-warning);">${headingVal}°</span> <span style="font-size:16px; color:var(--col-warning);">[OFFSET]</span>`;
     }
   }
 
@@ -397,20 +391,35 @@ function renderHeroAlert(scan) {
     notesText.innerText = scan.operator_notes || "No remarks attached to latest telemetry entry.";
   }
 
-  // Rotate compass needle to target bearing
+  // Rotate compass needle to target offset
   const needle = document.getElementById("hero-compass-needle");
   if (needle) {
     needle.style.transform = `translateX(-50%) rotate(${headingVal}deg)`;
   }
   const cardinalEl = document.getElementById("hero-heading-cardinal");
   if (cardinalEl) {
-    if (hasHeading) {
-      cardinalEl.innerText = `Peak Threat Vector: ${headingVal}° [${cardinal}]`;
+    if (isTargetAhead) {
+      cardinalEl.innerText = `Target Ahead (0° Alignment)`;
     } else {
-      cardinalEl.innerText = `Angle Telemetry Pending Calibration`;
+      cardinalEl.innerText = `Saved at ${headingVal}° away from Target Ahead`;
+    }
+  }
+  const pill = document.getElementById("hero-sector-pill");
+  if (pill) {
+    if (isTargetAhead) {
+      pill.innerText = `0° TARGET AHEAD`;
+      pill.style.color = "var(--col-nominal)";
+      pill.style.borderColor = "rgba(16, 185, 129, 0.4)";
+      pill.style.background = "rgba(16, 185, 129, 0.1)";
+    } else {
+      pill.innerText = `${headingVal}° TARGET OFFSET`;
+      pill.style.color = "var(--col-warning)";
+      pill.style.borderColor = "rgba(245, 158, 11, 0.4)";
+      pill.style.background = "rgba(245, 158, 11, 0.1)";
     }
   }
 }
+
 
 
 // ---------- Sample Demo Data Seeder ----------
@@ -448,13 +457,12 @@ function renderLogTable() {
       tr.className = "latest-row";
     }
 
-    const hasHeading = scan.heading !== null && scan.heading !== undefined;
-    const heading = hasHeading ? scan.heading : 0;
-    const cardinal = getCardinal(heading);
+    const headingVal = (scan.heading !== null && scan.heading !== undefined) ? parseInt(scan.heading) : 0;
+    const isTargetAhead = (headingVal === 0);
 
-    const angleCell = hasHeading
-      ? `<span class="notes-cell" title="Click to calibrate high-confidence angle" onclick="editAngle(${scan.id}, this)"><strong>${heading}°</strong> [${cardinal}]</span>`
-      : `<span class="notes-cell" title="Click to calibrate high-confidence angle" onclick="editAngle(${scan.id}, this)"><span style="color:var(--text-dim);">-- [click to set]</span></span>`;
+    const angleBadge = isTargetAhead
+      ? `<span class="badge clear">0° [AHEAD]</span>`
+      : `<span class="badge warning">${headingVal}° AWAY</span>`;
 
     tr.innerHTML = `
       <td>
@@ -463,7 +471,7 @@ function renderLogTable() {
       </td>
       <td><span class="badge ${lvl}">${scan.threat_level}</span></td>
       <td><strong>${scan.confidence}%</strong></td>
-      <td>${angleCell}</td>
+      <td>${angleBadge}</td>
       <td>${Number(scan.lat).toFixed(4)}, ${Number(scan.lon).toFixed(4)}</td>
       <td>${formatTime(scan.timestamp)}</td>
       <td>
@@ -472,7 +480,6 @@ function renderLogTable() {
         </span>
       </td>
     `;
-
 
     tr.addEventListener("click", (e) => {
       if (e.target.closest(".notes-cell")) return;
@@ -525,25 +532,6 @@ async function editNote(scanId, element) {
   }
 }
 
-function editAngle(scanId, element) {
-  const scan = allScans.find(s => s.id === scanId);
-  const current = scan && scan.heading !== null && scan.heading !== undefined ? scan.heading : "";
-  const updated = prompt("Enter High-Confidence Peak Threat Angle (0-359°) for Scan #" + (scan ? scan.scan_number : scanId) + ":", current || "45");
-  if (updated === null) return;
-  const val = parseInt(updated.trim(), 10);
-  if (isNaN(val) || val < 0 || val > 359) {
-    alert("Please enter a valid angle between 0 and 359 degrees.");
-    return;
-  }
-  if (scan) {
-    scan.heading = val;
-    notesCache[scan.scan_number + "_angle"] = val;
-    notesCache[scan.timestamp + "_angle"] = val;
-    saveNotesCache();
-    renderAllViews();
-    showToast(`Peak threat angle set to ${val}° [${getCardinal(val)}] for Scan #${scan.scan_number}`);
-  }
-}
 
 // ---------- Leaflet.js GPS Threat Map ----------
 
