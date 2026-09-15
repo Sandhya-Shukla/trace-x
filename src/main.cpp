@@ -660,6 +660,7 @@ void loop() {
   static bool lastLangState = HIGH;
   static bool lastSendState = HIGH;
   static bool lastAboveThreshold = false;
+  static bool sweepResetPending = false;
   static unsigned long lastDisplayUpdate = 0;
   static unsigned long savedMsgUntil = 0;
   static float lastLat = 0, lastLon = 0;
@@ -822,7 +823,6 @@ void loop() {
   // refresh the screen at ~20 FPS for instant knob response
   unsigned long now = millis();
 
-  static bool sweepResetPending = false;
   if (sweepResetPending && now >= savedMsgUntil) {
     clearSweepMemory();
     sweepResetPending = false;
