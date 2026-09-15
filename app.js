@@ -127,7 +127,7 @@ async function syncThingSpeak(silent = false) {
       // Map feeds to standard scan objects, newest first
       const mappedScans = feeds.map(f => {
         const entryId = parseInt(f.entry_id) || 0;
-        const scanNum = entryId;
+        const scanNum = parseInt(f.field1) || entryId;
         const lvlCode = String(f.field2 || "0");
         const conf = parseInt(f.field3) || 0;
         const lat = parseFloat(f.field4) || 28.6430;

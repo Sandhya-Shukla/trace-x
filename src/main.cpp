@@ -182,20 +182,27 @@ void connectWiFi() {
   }
 }
 
-void sendToCloud(ThreatLevel level, int confidence, float lat, float lon, int peakHeading, int facingHeading = -1) {
-  if (!wifiReady || WiFi.status() != WL_CONNECTED) return;
+struct PendingUpload {
+  bool active;
+  ThreatLevel level;
+  int confidence;
+  float lat;
+  float lon;
+  int peakHeading;
+  int facingHeading;
+  int scanNumber;
+};
+static PendingUpload pendingUpload = {false, CLEAR, 0, 0.0, 0.0, 0, -1, 0};
+static unsigned long lastUploadTime = 0;
 
-  static unsigned long lastUploadTime = 0;
-  if (millis() - lastUploadTime < 15000 && lastUploadTime != 0) {
-    return; // ThingSpeak 15s limit
-  }
-  lastUploadTime = millis();
+void executeCloudUpload(ThreatLevel level, int confidence, float lat, float lon, int peakHeading, int facingHeading, int scanNum) {
+  if (!wifiReady || WiFi.status() != WL_CONNECTED) return;
 
   HTTPClient http;
   http.setConnectTimeout(1500); // 1.5s reliable connect timeout for Wokwi gateway
   http.setTimeout(1500);        // 1.5s read timeout
   String url = "http://api.thingspeak.com/update?api_key=" + String(THINGSPEAK_API_KEY) +
-               "&field1=" + String(scanCount) +
+               "&field1=" + String(scanNum) +
                "&field2=" + String((int)level) +
                "&field3=" + String(confidence) +
                "&field4=" + String(lat, 5) +
@@ -209,15 +216,61 @@ void sendToCloud(ThreatLevel level, int confidence, float lat, float lon, int pe
   int code = http.GET();
   http.end();
 
+  lastUploadTime = millis();
+
   Serial.print("ThingSpeak upload HTTP code: ");
   Serial.print(code);
-  Serial.print(" [peakAngle=");
+  Serial.print(" [Scan #");
+  Serial.print(scanNum);
+  Serial.print(" peakAngle=");
   Serial.print(peakHeading);
   if (facingHeading >= 0) {
     Serial.print(" facing=");
     Serial.print(facingHeading);
   }
   Serial.println("]");
+}
+
+void sendToCloud(ThreatLevel level, int confidence, float lat, float lon, int peakHeading, int facingHeading = -1) {
+  if (!wifiReady || WiFi.status() != WL_CONNECTED) return;
+
+  unsigned long now = millis();
+  unsigned long elapsed = (lastUploadTime == 0) ? 999999 : (now - lastUploadTime);
+
+  if (elapsed >= 15000) {
+    // 15-second rate limit window open: upload immediately
+    executeCloudUpload(level, confidence, lat, lon, peakHeading, facingHeading, scanCount);
+    pendingUpload.active = false;
+  } else {
+    // Within 15-second ThingSpeak rate limit: queue for automatic transmission
+    pendingUpload.active = true;
+    pendingUpload.level = level;
+    pendingUpload.confidence = confidence;
+    pendingUpload.lat = lat;
+    pendingUpload.lon = lon;
+    pendingUpload.peakHeading = peakHeading;
+    pendingUpload.facingHeading = facingHeading;
+    pendingUpload.scanNumber = scanCount;
+
+    int waitSec = (15000 - elapsed) / 1000 + 1;
+    Serial.print("Cloud upload queued: ThingSpeak 15s cooldown active (");
+    Serial.print(waitSec);
+    Serial.println("s remaining). Telemetry will auto-transmit when cooldown finishes.");
+  }
+}
+
+void processPendingUpload() {
+  if (!pendingUpload.active) return;
+  if (!wifiReady || WiFi.status() != WL_CONNECTED) return;
+
+  unsigned long now = millis();
+  if (now - lastUploadTime >= 15000) {
+    Serial.print("Transmitting queued detection to Cloud #");
+    Serial.println(pendingUpload.scanNumber);
+    executeCloudUpload(pendingUpload.level, pendingUpload.confidence, pendingUpload.lat, pendingUpload.lon,
+                       pendingUpload.peakHeading, pendingUpload.facingHeading, pendingUpload.scanNumber);
+    pendingUpload.active = false;
+  }
 }
 
 
@@ -645,6 +698,8 @@ void loop() {
     return; // fully idle, nothing else runs
   }
 
+  processPendingUpload();
+
   // read both dedicated sensors directly
   int confN = map(analogRead(PIN_POT_NARCOTIC), 0, 4095, 0, 100);
   int confE = map(analogRead(PIN_POT_EXPLOSIVE), 0, 4095, 0, 100);
@@ -747,10 +802,11 @@ void loop() {
       logToSD(saveThreat, saveConf, lastLat, lastLon, saveAngle);
       sendToCloud(saveThreat, saveConf, lastLat, lastLon, saveAngle, (targetHeading >= 0 ? targetHeading : currentHeading));
       savedMsgUntil = millis() + SAVED_MSG_MS;
+      sweepResetPending = true;
 
-      // DO NOT call clearSweepMemory()!
-      // This preserves targetHeading and guidance orientation so that
-      // saving while pointing at a wrong/turned angle does NOT flip to "TARGET AHEAD".
+      // Preserves targetHeading and guidance orientation during the 1.2s SAVED display
+      // so saving while pointing at an angle cleanly shows SAVED(XX°) without flipping.
+      // After 1.2s, sweep memory auto-resets so the next detection can be scanned fresh.
 
       Serial.print("Manual SEND #"); Serial.print(scanCount);
       Serial.print(" level="); Serial.print(levelName(saveThreat));
@@ -765,6 +821,14 @@ void loop() {
 
   // refresh the screen at ~20 FPS for instant knob response
   unsigned long now = millis();
+
+  static bool sweepResetPending = false;
+  if (sweepResetPending && now >= savedMsgUntil) {
+    clearSweepMemory();
+    sweepResetPending = false;
+    Serial.println("Sweep memory reset: ready for next detection scan");
+  }
+
   if (now - lastDisplayUpdate >= 50) {
     lastDisplayUpdate = now;
     static char statusBuf[24];
@@ -776,6 +840,11 @@ void loop() {
       } else {
         snprintf(statusBuf, sizeof(statusBuf), "SAVE (%d%c)", dispAngle, (char)247);
       }
+      status = statusBuf;
+    } else if (pendingUpload.active) {
+      int waitSec = (15000 - (now - lastUploadTime)) / 1000 + 1;
+      if (waitSec < 1) waitSec = 1;
+      snprintf(statusBuf, sizeof(statusBuf), "SYNC (%ds)", waitSec);
       status = statusBuf;
     } else if (domConf >= ALERT_THRESHOLD) {
       status = (currentLang == 0) ? "ALERT" : "SAVDHAN";
