@@ -154,15 +154,16 @@ void getLocation(float &lat, float &lon) {
 
 // ---------- SD card event logging ----------
 
-void logToSD(ThreatLevel level, int confidence, float lat, float lon) {
+void logToSD(ThreatLevel level, int confidence, float lat, float lon, int heading) {
   if (!sdReady) return;
   File f = SD.open("/log.csv", FILE_APPEND);
   if (!f) return;
-  f.printf("%d,%lu,%s,%d,%.5f,%.5f\n",
+  f.printf("%d,%lu,%s,%d,%d,%.5f,%.5f\n",
            scanCount, (unsigned long)millis(), levelName(level),
-           confidence, lat, lon);
+           confidence, heading, lat, lon);
   f.close();
 }
+
 
 // ---------- cloud upload (ThingSpeak) ----------
 
@@ -181,7 +182,7 @@ void connectWiFi() {
   }
 }
 
-void sendToCloud(ThreatLevel level, int confidence, float lat, float lon, int heading) {
+void sendToCloud(ThreatLevel level, int confidence, float lat, float lon, int peakHeading, int facingHeading = -1) {
   if (!wifiReady || WiFi.status() != WL_CONNECTED) return;
 
   static unsigned long lastUploadTime = 0;
@@ -199,15 +200,26 @@ void sendToCloud(ThreatLevel level, int confidence, float lat, float lon, int he
                "&field3=" + String(confidence) +
                "&field4=" + String(lat, 5) +
                "&field5=" + String(lon, 5) +
-               "&field6=" + String(heading);
+               "&field6=" + String(peakHeading);
+  if (facingHeading >= 0) {
+    url += "&field7=" + String(facingHeading);
+  }
 
   http.begin(url);
   int code = http.GET();
   http.end();
 
   Serial.print("ThingSpeak upload HTTP code: ");
-  Serial.println(code);
+  Serial.print(code);
+  Serial.print(" [peakAngle=");
+  Serial.print(peakHeading);
+  if (facingHeading >= 0) {
+    Serial.print(" facing=");
+    Serial.print(facingHeading);
+  }
+  Serial.println("]");
 }
+
 
 // ---------- TFT Display Rendering (320x240 Landscape) ----------
 
@@ -670,29 +682,28 @@ void loop() {
         targetHeading = currentHeading;
         sectorMaxConf[currentSector] = domConf;
         sectorThreat[currentSector] = dominant;
-      } else if (domConf > targetConf + 5) {
-        // Operator swept to a new angle and found a stronger peak: re-latch
+      } else if (domConf > targetConf) {
+        // Operator swept to a new angle and found a stronger peak: re-latch to stronger peak
         targetHeading = currentHeading;
         targetConf = domConf;
         targetThreat = dominant;
         sectorMaxConf[currentSector] = domConf;
         sectorThreat[currentSector] = dominant;
       }
-      // When turned away (abs(angleDiff) > 25 and domConf <= targetConf + 5),
+      // When turned away (abs(angleDiff) > 25 and domConf <= targetConf),
       // we preserve targetHeading & targetConf so guidance points back accurately
       // without other sectors being contaminated during the sweep.
     }
   } else {
     // Both threat pots are near 0 (no active signal)
-    // If facing the target location and signal dropped to 0, clear target
-    if (targetHeading >= 0) {
-      int angleDiff = (targetHeading - currentHeading + 540) % 360 - 180;
-      if (abs(angleDiff) <= 25 && domConf == 0) {
-        sectorMaxConf[targetHeading / SECTOR_SPAN] = 0;
-        sectorThreat[targetHeading / SECTOR_SPAN] = CLEAR;
-        targetHeading = -1;
-        targetConf = 0;
-        targetThreat = CLEAR;
+    // Clear sweep memory when the operator zeroes out the threat sensors
+    if (targetHeading >= 0 && domConf == 0) {
+      targetHeading = -1;
+      targetConf = 0;
+      targetThreat = CLEAR;
+      for (int i = 0; i < NUM_SECTORS; i++) {
+        sectorMaxConf[i] = 0;
+        sectorThreat[i] = CLEAR;
       }
     }
   }
@@ -717,20 +728,31 @@ void loop() {
 
   getLocation(lastLat, lastLon);
 
-  // manual SEND / SAVE button - independent of alert threshold, clears sweep memory
+  // manual SEND / SAVE button - records peak threat telemetry while preserving sweep lock
   if (lastSendState == HIGH && sendState == LOW) {
     delay(30);
     if (digitalRead(PIN_SEND_BTN) == LOW) {
       scanCount++;
-      logToSD(dominant, domConf, lastLat, lastLon);
-      sendToCloud(dominant, domConf, lastLat, lastLon, currentHeading);
+
+      // Peak threat attributes: save the high-confidence detection angle and confidence
+      int saveConf = (targetHeading >= 0 && targetConf > domConf) ? targetConf : domConf;
+      ThreatLevel saveThreat = (targetHeading >= 0 && targetConf > domConf) ? targetThreat : dominant;
+      int savePeakAngle = (targetHeading >= 0) ? targetHeading : currentHeading;
+      int saveFacingAngle = currentHeading;
+
+      logToSD(saveThreat, saveConf, lastLat, lastLon, savePeakAngle);
+      sendToCloud(saveThreat, saveConf, lastLat, lastLon, savePeakAngle, saveFacingAngle);
       savedMsgUntil = millis() + SAVED_MSG_MS;
-      clearSweepMemory();
+
+      // DO NOT call clearSweepMemory()!
+      // This preserves targetHeading and guidance orientation so that
+      // saving while pointing at a wrong/turned angle does NOT flip to "TARGET AHEAD".
+
       Serial.print("Manual SEND #"); Serial.print(scanCount);
-      Serial.print(" level="); Serial.print(levelName(dominant));
-      Serial.print(" conf="); Serial.print(domConf);
-      Serial.print(" hdg="); Serial.println(currentHeading);
-      Serial.println(" [Sweep Memory Cleared for Next Search Area]");
+      Serial.print(" level="); Serial.print(levelName(saveThreat));
+      Serial.print(" conf="); Serial.print(saveConf);
+      Serial.print(" peakAngle="); Serial.print(savePeakAngle);
+      Serial.print(" facingAngle="); Serial.println(saveFacingAngle);
     }
   }
   lastSendState = sendState;
@@ -758,15 +780,17 @@ void loop() {
   bool aboveThreshold = domConf >= ALERT_THRESHOLD;
   if (aboveThreshold && !lastAboveThreshold) {
     scanCount++;
+    int peakHeading = (targetHeading >= 0) ? targetHeading : currentHeading;
     Serial.print("AUTO ALERT #"); Serial.print(scanCount);
     Serial.print(" level="); Serial.print(levelName(dominant));
     Serial.print(" conf="); Serial.print(domConf);
-    Serial.print(" hdg="); Serial.print(currentHeading);
+    Serial.print(" peakAngle="); Serial.print(peakHeading);
+    Serial.print(" facingHdg="); Serial.print(currentHeading);
     Serial.print(" lat="); Serial.print(lastLat, 5);
     Serial.print(" lon="); Serial.println(lastLon, 5);
 
-    logToSD(dominant, domConf, lastLat, lastLon);
+    logToSD(dominant, domConf, lastLat, lastLon, peakHeading);
     // Cloud upload intentionally omitted here to guarantee zero latency during sweep!
   }
   lastAboveThreshold = aboveThreshold;
-}
+}
